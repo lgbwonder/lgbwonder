@@ -6,16 +6,16 @@ This MCP server provides access to MyGlodon asset management functionality
 through the OpenAssetManageController API endpoints.
 """
 
-import asyncio
 import json
 import logging
 from typing import Any, Dict
 import aiohttp
+from fastapi import FastAPI
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.server.models import InitializationOptions
 from mcp.types import (
+    CallToolRequest,
     CallToolResult,
+    ListToolsRequest,
     ListToolsResult,
     Tool,
     TextContent,
@@ -27,15 +27,20 @@ logger = logging.getLogger(__name__)
 
 # Global constants
 BASE_URL = "https://me-test.glodon.com"
+HOST = "127.0.0.1"  # Listen on localhost only
+PORT = 18080  # HTTP port
 
-# Create server instance
-server = Server("myglodon-asset-management")
+# Create FastAPI app
+app = FastAPI(title="MyGlodon Asset Management MCP Server", version="1.0.0")
+
+# Create MCP server
+mcp_server = Server("myglodon-asset-management")
 
 
-@server.list_tools()
-async def list_tools() -> ListToolsResult:
-    """List available tools for MyGlodon asset management."""
-    tools = [
+# Define tools
+def get_tools():
+    """Get the list of available tools."""
+    return [
         Tool(
             name="query_assets_by_status",
             description="查询资产状态 - 根据状态查询企业资产信息，支持分页",
@@ -186,7 +191,41 @@ async def list_tools() -> ListToolsResult:
             }
         ),
     ]
-    return ListToolsResult(tools=tools)
+
+
+# Set up MCP server handlers
+async def handle_list_tools(request: ListToolsRequest) -> ListToolsResult:
+    """Handle list tools request."""
+    return ListToolsResult(tools=get_tools())
+
+
+async def handle_call_tool(request: CallToolRequest) -> CallToolResult:
+    """Handle tool call request."""
+    try:
+        if request.name == "query_assets_by_status":
+            return await query_assets_by_status(request.arguments)
+        elif request.name == "allocate_asset_privileges":
+            return await allocate_asset_privileges(request.arguments)
+        elif request.name == "query_online_products":
+            return await query_online_products(request.arguments)
+        elif request.name == "query_enterprise_members":
+            return await query_enterprise_members(request.arguments)
+        elif request.name == "query_asset_privilege_status":
+            return await query_asset_privilege_status(request.arguments)
+        else:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Unknown tool: {request.name}")]
+            )
+    except Exception as e:
+        logger.error(f"Error executing tool {request.name}: {str(e)}")
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: {str(e)}")]
+        )
+
+
+# Set up the server handlers
+mcp_server.list_tools = handle_list_tools
+mcp_server.call_tool = handle_call_tool
 
 
 async def query_assets_by_status(arguments: Dict[str, Any]) -> CallToolResult:
@@ -355,42 +394,95 @@ async def query_asset_privilege_status(arguments: Dict[str, Any]) -> CallToolRes
         )
 
 
-async def main():
-    """Main entry point for the MCP server."""
-    print("Starting MyGlodon Asset Management MCP Server")
-    print("Server is running in stdio mode - suitable for MCP client integration")
-    print("To use HTTP API, you can integrate with MCP clients like Claude Desktop")
-
-    # Run the server using stdio (standard MCP mode)
-    async with stdio_server() as (read_stream, write_stream):
-        print("Server started successfully in stdio mode")
-        # Create capabilities manually to avoid None issues
-        capabilities = {
-            "tools": {
-                "listChanged": False,  # 工具列表是否可变
-                "maxTools": 100  # 最大工具数量
-            },
-            "notifications": {
-                "supported": False  # 是否支持通知
-            },
-            "resources": {
-                "supported": False  # 是否支持资源管理
-            },
-            "logging": {
-                "supported": False  # 是否支持日志
-            }
+# Add MCP endpoints to FastAPI app
+@app.post("/mcp/tools/list")
+async def mcp_list_tools():
+    """MCP tools list endpoint."""
+    tools = get_tools()
+    # Convert Tool objects to dictionaries
+    tools_list = []
+    for tool in tools:
+        tool_dict = {
+            "name": tool.name,
+            "description": tool.description,
+            "inputSchema": tool.inputSchema
         }
+        tools_list.append(tool_dict)
+    return {"tools": tools_list}
 
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="myglodon-asset-management",
-                server_version="1.0.0",
-                capabilities=capabilities,
-            )
-        )
+
+@app.post("/mcp/tools/call")
+async def mcp_call_tool(request: dict):
+    """MCP tool call endpoint."""
+    tool_name = request.get("name")
+    arguments = request.get("arguments", {})
+
+    try:
+        if tool_name == "query_assets_by_status":
+            result = await query_assets_by_status(arguments)
+        elif tool_name == "allocate_asset_privileges":
+            result = await allocate_asset_privileges(arguments)
+        elif tool_name == "query_online_products":
+            result = await query_online_products(arguments)
+        elif tool_name == "query_enterprise_members":
+            result = await query_enterprise_members(arguments)
+        elif tool_name == "query_asset_privilege_status":
+            result = await query_asset_privilege_status(arguments)
+        else:
+            return {"error": f"Unknown tool: {tool_name}"}
+
+        # Convert MCP result to simple dict
+        return {
+            "content": [
+                {
+                    "type": content.type,
+                    "text": content.text
+                } for content in result.content
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name}: {str(e)}")
+        return {"error": str(e)}
+
+
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "MyGlodon Asset Management MCP Server"}
+
+
+# Add root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with server information."""
+    return {
+        "service": "MyGlodon Asset Management MCP Server",
+        "version": "1.0.0",
+        "mode": "FastAPI + FastMCP",
+        "endpoints": {
+            "mcp": "/mcp",
+            "health": "/health",
+            "docs": "/docs"
+        }
+    }
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import uvicorn
+
+    print("Starting MyGlodon Asset Management MCP Server")
+    print(f"Server is running in FastAPI + MCP mode on {HOST}:{PORT}")
+    print("You can access the server at:")
+    print(f"  - Main API: http://{HOST}:{PORT}")
+    print(f"  - MCP Endpoint: http://{HOST}:{PORT}/mcp")
+    print(f"  - API Documentation: http://{HOST}:{PORT}/docs")
+    print(f"  - Health Check: http://{HOST}:{PORT}/health")
+
+    # Run the server using uvicorn
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        log_level="info"
+    )
