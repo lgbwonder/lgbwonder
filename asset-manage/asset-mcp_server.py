@@ -14,23 +14,91 @@ import requests
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 
-# Configure logging with simplified format
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
-logger = logging.getLogger(__name__)
-
 # Load Environment Variables
 env_path = (Path(__file__).parent / "../system/.env").resolve()
 load_dotenv(dotenv_path=env_path, verbose=False)
 
+
+def setup_logging(log_level=None, log_file=None, log_format=None):
+    """Setup logging configuration"""
+
+    # Default values
+    if log_level is None:
+        log_level = os.getenv("ASSET_LOG_LEVEL", "INFO")
+
+    if log_format is None:
+        log_format = os.getenv("ASSET_LOG_FORMAT", "simple")
+
+    # Convert string to logging level
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL
+    }
+
+    log_level_num = level_map.get(log_level.upper(), logging.INFO)
+
+    # Log formats
+    formats = {
+        "simple": "%(asctime)s [%(levelname)s] %(message)s",
+        "detailed": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s",
+        "minimal": "%(levelname)s: %(message)s",
+        "json": '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
+    }
+
+    log_format_str = formats.get(log_format, formats["simple"])
+
+    # Create logs directory if it doesn't exist
+    if log_file:
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Configure logging
+    logging.basicConfig(
+        level=log_level_num,
+        format=log_format_str,
+        datefmt='%H:%M:%S',
+        handlers=[]
+    )
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level_num)
+    console_formatter = logging.Formatter(log_format_str, datefmt='%H:%M:%S')
+    console_handler.setFormatter(console_formatter)
+
+    # File handler (if specified)
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(log_level_num)
+        file_formatter = logging.Formatter(log_format_str, datefmt='%Y-%m-%d %H:%M:%S')
+        file_handler.setFormatter(file_formatter)
+        logging.getLogger().addHandler(file_handler)
+
+    # Add console handler
+    logging.getLogger().addHandler(console_handler)
+
+    # Set specific logger levels
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    return logging.getLogger(__name__)
+
+
+# Setup logging
+logger = setup_logging(
+    log_level=os.getenv("ASSET_LOG_LEVEL", "INFO"),
+    log_file=os.getenv("ASSET_LOG_FILE", "logs/server.log"),
+    log_format=os.getenv("ASSET_LOG_FORMAT", "simple")
+)
+
 # Global constants
-BASE_URL = os.getenv("MYGLODON_URL")
+BASE_URL = os.getenv("ASSET_URL")
 
 # Create FastMCP server
-mcp = FastMCP(os.getenv("SERVER_NAME"))
+mcp = FastMCP(os.getenv("ASSET_SERVER_NAME"))
 
 
 @mcp.tool()
@@ -308,4 +376,4 @@ if __name__ == "__main__":
     print()
 
     # Run the server using FastMCP
-    mcp.run(transport="streamable-http", host=os.getenv("SERVER_HOST"), port=int(os.getenv("SERVER_PORT")))
+    mcp.run(transport="streamable-http", host=os.getenv("ASSET_SERVER_HOST"), port=int(os.getenv("ASSET_SERVER_PORT")))
