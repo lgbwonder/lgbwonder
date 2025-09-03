@@ -122,7 +122,7 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{BASE_URL}/v1/assets/manage/asset/status"
+        url = f"{ASSET_URL}/v1/assets/manage/asset/status"
         params = {"pageNum": pageNum, "pageSize": pageSize}
         data = {"searchType": searchType, "searchCondition": searchCondition, "assetStatus": assetStatus}
         headers = {"userToken": userToken, "clientToken": clientToken, "Content-Type": "application/json"}
