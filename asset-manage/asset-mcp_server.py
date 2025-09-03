@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-MyGlodon Asset Management MCP Server
+MyGlodon Asset & Member Management MCP Server
 
 This MCP server provides access to MyGlodon asset management functionality
 through the OpenAssetManageController API endpoints.
+This MCP server provides access to MyGlodon asset management and member management functionality
 """
 
 import json
@@ -95,7 +96,9 @@ logger = setup_logging(
 )
 
 # Global constants
-BASE_URL = os.getenv("ASSET_URL")
+ASSET_URL = os.getenv("ASSET_URL")
+MEMBER_URL = os.getenv("MEMBER_URL")
+MEMBER_BASIC_HEADER = os.getenv("MEMBER_BASIC_HEADER")
 
 # Create FastMCP server
 mcp = FastMCP(os.getenv("ASSET_SERVER_NAME"))
@@ -173,7 +176,7 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{BASE_URL}/v1/assets/manage/asset/{assignType}/privileges"
+        url = f"{ASSET_URL}/v1/assets/manage/asset/{assignType}/privileges"
         headers = {"userToken": userToken, "clientToken": clientToken, "Content-Type": "application/json"}
 
         logger.info(f"资产权限操作 - 类型:{assignType}, 数量:{len(assetPrivileges)}")
@@ -224,7 +227,7 @@ def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) ->
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{BASE_URL}/v1/assets/manage/{assetId}/products/online"
+        url = f"{ASSET_URL}/v1/assets/manage/{assetId}/products/online"
         headers = {"userToken": userToken, "clientToken": clientToken}
 
         logger.info(f"查询在线产品 - 资产ID:{assetId}")
@@ -274,7 +277,7 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str) -> dict:
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{BASE_URL}/v1/assets/manage/members"
+        url = f"{ASSET_URL}/v1/assets/manage/members"
         headers = {"userToken": userToken, "clientToken": clientToken}
 
         logger.info("查询企业成员")
@@ -325,7 +328,7 @@ def query_asset_privilege_status_mcp(userToken: str, clientToken: str, assetId: 
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{BASE_URL}/v1/assets/manage/asset/{assetId}/privilege/status"
+        url = f"{ASSET_URL}/v1/assets/manage/asset/{assetId}/privilege/status"
         headers = {"userToken": userToken, "clientToken": clientToken}
 
         logger.info(f"查询资产权限状态 - 资产ID:{assetId}")
@@ -363,8 +366,132 @@ def query_asset_privilege_status_mcp(userToken: str, clientToken: str, assetId: 
         return {"success": False, "error": error_msg, "type": "unknown_error"}
 
 
+@mcp.tool()
+def generate_client_token_mcp(authHeader: str = None, grantType: str = "client_credentials") -> dict:
+    """生成客户端令牌 - 通过OAuth2客户端凭据流程获取访问令牌"""
+    try:
+        if authHeader is None:
+            authHeader = MEMBER_BASIC_HEADER
+
+        headers = {
+            "Authorization": f"Basic {authHeader}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        data = {"grant_type": grantType}
+
+        logger.info(f"生成客户端令牌 - 授权类型: {grantType}")
+
+        resp = requests.post(MEMBER_URL, headers=headers, data=data, timeout=30)
+
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"令牌生成成功 - 状态码: {resp.status_code}")
+            return {
+                "success": True,
+                "data": result,
+                "message": "客户端令牌生成成功",
+                "access_token": result.get("access_token"),
+                "token_type": result.get("token_type"),
+                "expires_in": result.get("expires_in")
+            }
+        else:
+            error_msg = f"接口调用失败，状态码: {resp.status_code}"
+            try:
+                error_detail = resp.json()
+                error_msg += f"，错误详情: {error_detail}"
+            except:
+                error_msg += f"，响应内容: {resp.text}"
+
+            logger.error(f"令牌生成失败 - {error_msg}")
+            return {"success": False, "error": error_msg, "status_code": resp.status_code}
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"网络请求异常: {str(e)}"
+        logger.error(f"网络异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "network_error"}
+    except json.JSONDecodeError as e:
+        error_msg = f"响应解析异常: {str(e)}"
+        logger.error(f"解析异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "parse_error"}
+    except Exception as e:
+        error_msg = f"未知异常: {str(e)}"
+        logger.error(f"未知异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "unknown_error"}
+
+
+@mcp.tool()
+def generate_user_token_mcp(uid: str, authHeader: str = None, grantType: str = "uid") -> dict:
+    """生成用户令牌 - 通过OAuth2 UID流程获取用户访问令牌
+
+    参数说明：
+        uid: 用户ID
+        authHeader: 授权头，Base64编码的客户端ID和密钥，格式为 "client_id:client_secret" 的Base64编码
+        grantType: 授权类型，默认为 "uid"
+
+    返回格式：
+        成功时返回包含访问令牌的响应数据，失败时返回错误信息
+    """
+    try:
+        # 使用传入的授权头或默认值
+        if authHeader is None:
+            authHeader = MEMBER_BASIC_HEADER
+
+        headers = {
+            "Authorization": f"Basic {authHeader}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        data = {
+            "grant_type": grantType,
+            "uid": uid
+        }
+
+        logger.info(f"生成用户令牌 - UID: {uid}, 授权类型: {grantType}")
+
+        # 发送请求到OAuth端点
+        resp = requests.post(MEMBER_URL, headers=headers, data=data, timeout=30)
+
+        # 检查响应状态
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"用户令牌生成成功 - 状态码: {resp.status_code}")
+            return {
+                "success": True,
+                "data": result,
+                "message": "用户令牌生成成功",
+                "access_token": result.get("access_token"),
+                "token_type": result.get("token_type"),
+                "expires_in": result.get("expires_in"),
+                "uid": uid
+            }
+        else:
+            error_msg = f"接口调用失败，状态码: {resp.status_code}"
+            try:
+                error_detail = resp.json()
+                error_msg += f"，错误详情: {error_detail}"
+            except:
+                error_msg += f"，响应内容: {resp.text}"
+
+            logger.error(f"用户令牌生成失败 - {error_msg}")
+            return {"success": False, "error": error_msg, "status_code": resp.status_code}
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"网络请求异常: {str(e)}"
+        logger.error(f"网络异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "network_error"}
+    except json.JSONDecodeError as e:
+        error_msg = f"响应解析异常: {str(e)}"
+        logger.error(f"解析异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "parse_error"}
+    except Exception as e:
+        error_msg = f"未知异常: {str(e)}"
+        logger.error(f"未知异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "unknown_error"}
+
+
 if __name__ == "__main__":
-    print("🚀 MyGlodon Asset Management MCP Server")
+    print("🚀 MyGlodon Asset & Member Management MCP Server")
     print("=" * 50)
     print("可用工具:")
     print("  • query_assets_by_status_mcp - 查询资产状态")
@@ -372,6 +499,8 @@ if __name__ == "__main__":
     print("  • query_online_products_mcp - 查询在线产品")
     print("  • query_enterprise_members_mcp - 查询企业成员")
     print("  • query_asset_privilege_status_mcp - 查询资产权限状态")
+    print("  • generate_client_token_mcp - 生成客户端令牌")
+    print("  • generate_user_token_mcp - 生成用户令牌")
     print("=" * 50)
     print()
 
