@@ -97,8 +97,10 @@ logger = setup_logging(
 
 # Global constants
 ASSET_URL = os.getenv("ASSET_URL")
-MEMBER_URL = os.getenv("MEMBER_URL")
-MEMBER_BASIC_HEADER = os.getenv("MEMBER_BASIC_HEADER")
+MEMBER_CLIENT_TOKEN_URL = os.getenv("MEMBER_CLIENT_TOKEN_URL")
+MEMBER_USER_TOKEN_URL = os.getenv("MEMBER_USER_TOKEN_URL")
+MEMBER_CLIENT_TOKEN_HEADER = os.getenv("MEMBER_CLIENT_TOKEN_HEADER")
+MEMBER_USER_TOKEN_HEADER = os.getenv("MEMBER_USER_TOKEN_HEADER")
 
 # Create FastMCP server
 mcp = FastMCP(os.getenv("ASSET_SERVER_NAME"))
@@ -215,8 +217,8 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
 
 
 @mcp.tool()
-def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
-    """查询在线产品 - 查询指定资产的在线云锁产品信息
+def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
+    """查询资产产品详情 - 查询指定资产的云锁产品详情信息
 
     参数说明：
         userToken: 用户认证令牌
@@ -227,7 +229,7 @@ def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) ->
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{ASSET_URL}/v1/assets/manage/{assetId}/products/online"
+        url = f"{ASSET_URL}/v1/assets/manage/{assetId}/products"
         headers = {"userToken": userToken, "clientToken": clientToken}
 
         logger.info(f"查询在线产品 - 资产ID:{assetId}")
@@ -266,7 +268,7 @@ def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) ->
 
 
 @mcp.tool()
-def query_enterprise_members_mcp(userToken: str, clientToken: str) -> dict:
+def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str = '') -> dict:
     """查询企业成员 - 获取企业下的成员列表
 
     参数说明：
@@ -277,7 +279,7 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str) -> dict:
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{ASSET_URL}/v1/assets/manage/members"
+        url = f"{ASSET_URL}/v1/assets/manage/members" + f"?keyword={keyword}"
         headers = {"userToken": userToken, "clientToken": clientToken}
 
         logger.info("查询企业成员")
@@ -314,67 +316,12 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str) -> dict:
         logger.error(f"未知异常 - {error_msg}")
         return {"success": False, "error": error_msg, "type": "unknown_error"}
 
-
 @mcp.tool()
-def query_asset_privilege_status_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
-    """查询资产权限状态 - 获取资产的权限分配状态信息
-
-    参数说明：
-        userToken: 用户认证令牌
-        clientToken: 客户端认证令牌
-        assetId: 资产ID
-
-    返回格式：
-        成功时返回API响应数据，失败时返回错误信息
-    """
-    try:
-        url = f"{ASSET_URL}/v1/assets/manage/asset/{assetId}/privilege/status"
-        headers = {"userToken": userToken, "clientToken": clientToken}
-
-        logger.info(f"查询资产权限状态 - 资产ID:{assetId}")
-
-        # 发送请求
-        resp = requests.get(url, headers=headers, timeout=30)
-
-        # 检查响应状态
-        if resp.status_code == 200:
-            result = resp.json()
-            logger.info(f"查询成功 - 状态码:{resp.status_code}")
-            return {"success": True, "data": result, "message": "查询资产权限状态成功"}
-        else:
-            error_msg = f"接口调用失败，状态码: {resp.status_code}"
-            try:
-                error_detail = resp.json()
-                error_msg += f"，错误详情: {error_detail}"
-            except:
-                error_msg += f"，响应内容: {resp.text}"
-
-            logger.error(f"查询失败 - {error_msg}")
-            return {"success": False, "error": error_msg, "status_code": resp.status_code}
-
-    except requests.exceptions.RequestException as e:
-        error_msg = f"网络请求异常: {str(e)}"
-        logger.error(f"网络异常 - {error_msg}")
-        return {"success": False, "error": error_msg, "type": "network_error"}
-    except json.JSONDecodeError as e:
-        error_msg = f"响应解析异常: {str(e)}"
-        logger.error(f"解析异常 - {error_msg}")
-        return {"success": False, "error": error_msg, "type": "parse_error"}
-    except Exception as e:
-        error_msg = f"未知异常: {str(e)}"
-        logger.error(f"未知异常 - {error_msg}")
-        return {"success": False, "error": error_msg, "type": "unknown_error"}
-
-
-@mcp.tool()
-def generate_client_token_mcp(authHeader: str = None, grantType: str = "client_credentials") -> dict:
+def generate_client_token_mcp(grantType: str = "client_credentials") -> dict:
     """生成客户端令牌 - 通过OAuth2客户端凭据流程获取访问令牌"""
     try:
-        if authHeader is None:
-            authHeader = MEMBER_BASIC_HEADER
-
         headers = {
-            "Authorization": f"Basic {authHeader}",
+            "Authorization": f"Basic {MEMBER_CLIENT_TOKEN_HEADER}",
             "Content-Type": "application/x-www-form-urlencoded"
         }
 
@@ -382,7 +329,7 @@ def generate_client_token_mcp(authHeader: str = None, grantType: str = "client_c
 
         logger.info(f"生成客户端令牌 - 授权类型: {grantType}")
 
-        resp = requests.post(MEMBER_URL, headers=headers, data=data, timeout=30)
+        resp = requests.post(MEMBER_CLIENT_TOKEN_URL, headers=headers, data=data, timeout=30)
 
         if resp.status_code == 200:
             result = resp.json()
@@ -421,24 +368,19 @@ def generate_client_token_mcp(authHeader: str = None, grantType: str = "client_c
 
 
 @mcp.tool()
-def generate_user_token_mcp(uid: str, authHeader: str = None, grantType: str = "uid") -> dict:
+def generate_user_token_mcp(uid: str = None, grantType: str = "uid") -> dict:
     """生成用户令牌 - 通过OAuth2 UID流程获取用户访问令牌
 
     参数说明：
         uid: 用户ID
-        authHeader: 授权头，Base64编码的客户端ID和密钥，格式为 "client_id:client_secret" 的Base64编码
         grantType: 授权类型，默认为 "uid"
 
     返回格式：
         成功时返回包含访问令牌的响应数据，失败时返回错误信息
     """
     try:
-        # 使用传入的授权头或默认值
-        if authHeader is None:
-            authHeader = MEMBER_BASIC_HEADER
-
         headers = {
-            "Authorization": f"Basic {authHeader}",
+            "Authorization": f"Basic {MEMBER_USER_TOKEN_HEADER}",
             "Content-Type": "application/x-www-form-urlencoded"
         }
 
@@ -450,7 +392,7 @@ def generate_user_token_mcp(uid: str, authHeader: str = None, grantType: str = "
         logger.info(f"生成用户令牌 - UID: {uid}, 授权类型: {grantType}")
 
         # 发送请求到OAuth端点
-        resp = requests.post(MEMBER_URL, headers=headers, data=data, timeout=30)
+        resp = requests.post(MEMBER_USER_TOKEN_URL, headers=headers, data=data, timeout=30)
 
         # 检查响应状态
         if resp.status_code == 200:
@@ -496,13 +438,12 @@ if __name__ == "__main__":
     print("可用工具:")
     print("  • query_assets_by_status_mcp - 查询资产状态")
     print("  • allocate_asset_privileges_mcp - 分配/取消分配资产权限")
-    print("  • query_online_products_mcp - 查询在线产品")
+    print("  • query_asset_products_mcp - 查询资产产品详情")
     print("  • query_enterprise_members_mcp - 查询企业成员")
-    print("  • query_asset_privilege_status_mcp - 查询资产权限状态")
     print("  • generate_client_token_mcp - 生成客户端令牌")
     print("  • generate_user_token_mcp - 生成用户令牌")
     print("=" * 50)
     print()
 
     # Run the server using FastMCP
-    mcp.run(transport="streamable-http", host=os.getenv("ASSET_SERVER_HOST"), port=int(os.getenv("ASSET_SERVER_PORT")))
+    mcp.run(transport="sse", host=os.getenv("ASSET_SERVER_HOST"), port=int(os.getenv("ASSET_SERVER_PORT")))
