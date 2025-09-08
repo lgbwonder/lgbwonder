@@ -101,7 +101,7 @@ MEMBER_CLIENT_TOKEN_URL = os.getenv("MEMBER_CLIENT_TOKEN_URL")
 MEMBER_USER_TOKEN_URL = os.getenv("MEMBER_USER_TOKEN_URL")
 MEMBER_CLIENT_TOKEN_HEADER = os.getenv("MEMBER_CLIENT_TOKEN_HEADER")
 MEMBER_USER_TOKEN_HEADER = os.getenv("MEMBER_USER_TOKEN_HEADER")
-MEMBER_ADD__URL = os.getenv("MEMBER_ADD_URL")
+MEMBER_ADD_URL = os.getenv("MEMBER_ADD_URL")
 
 # Create FastMCP server
 mcp = FastMCP(os.getenv("ASSET_SERVER_NAME"))
@@ -337,7 +337,6 @@ def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name
         成功时返回API响应数据，失败时返回错误信息
     """
     try:
-        url = f"{MEMBER_ADD__URL}/api/member/add"
         headers = {
             "Authorization": f"Bearer {userToken}",
             "Content-Type": "application/x-www-form-urlencoded"
@@ -363,7 +362,7 @@ def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name
         logger.info(f"添加企业成员 - 用户名:{userName}, 姓名:{name}")
 
         # 发送请求
-        resp = requests.post(url, data=data, headers=headers, timeout=30)
+        resp = requests.post(MEMBER_ADD_URL, data=data, headers=headers, timeout=30)
 
         # 检查响应状态
         if resp.status_code == 200:
