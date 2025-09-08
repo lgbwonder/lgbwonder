@@ -217,7 +217,7 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
 
 
 @mcp.tool()
-def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
+def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
     """查询资产产品详情 - 查询指定资产的云锁产品详情信息
 
     参数说明：
@@ -438,7 +438,7 @@ if __name__ == "__main__":
     print("可用工具:")
     print("  • query_assets_by_status_mcp - 查询资产状态")
     print("  • allocate_asset_privileges_mcp - 分配/取消分配资产权限")
-    print("  • query_asset_products_mcp - 查询资产产品详情")
+    print("  • query_online_products_mcp - 查询在线产品")
     print("  • query_enterprise_members_mcp - 查询企业成员")
     print("  • generate_client_token_mcp - 生成客户端令牌")
     print("  • generate_user_token_mcp - 生成用户令牌")
