@@ -101,6 +101,7 @@ MEMBER_CLIENT_TOKEN_URL = os.getenv("MEMBER_CLIENT_TOKEN_URL")
 MEMBER_USER_TOKEN_URL = os.getenv("MEMBER_USER_TOKEN_URL")
 MEMBER_CLIENT_TOKEN_HEADER = os.getenv("MEMBER_CLIENT_TOKEN_HEADER")
 MEMBER_USER_TOKEN_HEADER = os.getenv("MEMBER_USER_TOKEN_HEADER")
+MEMBER_ADD__URL = os.getenv("MEMBER_ADD_URL")
 
 # Create FastMCP server
 mcp = FastMCP(os.getenv("ASSET_SERVER_NAME"))
@@ -217,7 +218,7 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
 
 
 @mcp.tool()
-def query_online_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
+def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
     """查询资产产品详情 - 查询指定资产的云锁产品详情信息
 
     参数说明：
@@ -301,6 +302,83 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
                 error_msg += f"，响应内容: {resp.text}"
 
             logger.error(f"查询失败 - {error_msg}")
+            return {"success": False, "error": error_msg, "status_code": resp.status_code}
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"网络请求异常: {str(e)}"
+        logger.error(f"网络异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "network_error"}
+    except json.JSONDecodeError as e:
+        error_msg = f"响应解析异常: {str(e)}"
+        logger.error(f"解析异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "parse_error"}
+    except Exception as e:
+        error_msg = f"未知异常: {str(e)}"
+        logger.error(f"未知异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "unknown_error"}
+
+@mcp.tool()
+def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name: str,
+                              departmentId: int = None, remark: str = None,
+                              passwordMobile: str = None, regionCode: str = None) -> dict:
+    """添加企业成员 - 为企业添加新成员
+
+    参数说明：
+        userToken: 用户认证令牌
+        userName: 账号名称，只能包含字母和数字，长度2-30个字符
+        password: 初始密码，8-16个字符，必须包含至少两种字符类型（数字、字母、符号）
+        name: 用户全名，最多30个字符
+        departmentId: 部门ID（可选）
+        remark: 备注信息，最多200个字符（可选）
+        passwordMobile: 安全手机号，用于密码找回（可选）
+        regionCode: 安全手机号的区域代码，仅国际站点有效（可选）
+
+    返回格式：
+        成功时返回API响应数据，失败时返回错误信息
+    """
+    try:
+        url = f"{MEMBER_ADD__URL}/api/member/add"
+        headers = {
+            "Authorization": f"Bearer {userToken}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        # 构建表单数据
+        data = {
+            "userName": userName,
+            "password": password,
+            "name": name
+        }
+
+        # 添加可选参数
+        if departmentId is not None:
+            data["departmentId"] = departmentId
+        if remark is not None:
+            data["remark"] = remark
+        if passwordMobile is not None:
+            data["passwordMobile"] = passwordMobile
+        if regionCode is not None:
+            data["regionCode"] = regionCode
+
+        logger.info(f"添加企业成员 - 用户名:{userName}, 姓名:{name}")
+
+        # 发送请求
+        resp = requests.post(url, data=data, headers=headers, timeout=30)
+
+        # 检查响应状态
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"添加成员成功 - 状态码:{resp.status_code}")
+            return {"success": True, "data": result, "message": "添加企业成员成功"}
+        else:
+            error_msg = f"接口调用失败，状态码: {resp.status_code}"
+            try:
+                error_detail = resp.json()
+                error_msg += f"，错误详情: {error_detail}"
+            except:
+                error_msg += f"，响应内容: {resp.text}"
+
+            logger.error(f"添加成员失败 - {error_msg}")
             return {"success": False, "error": error_msg, "status_code": resp.status_code}
 
     except requests.exceptions.RequestException as e:
@@ -432,14 +510,16 @@ def generate_user_token_mcp(uid: str = None, grantType: str = "uid") -> dict:
         return {"success": False, "error": error_msg, "type": "unknown_error"}
 
 
+
 if __name__ == "__main__":
     print("🚀 MyGlodon Asset & Member Management MCP Server")
     print("=" * 50)
     print("可用工具:")
     print("  • query_assets_by_status_mcp - 查询资产状态")
     print("  • allocate_asset_privileges_mcp - 分配/取消分配资产权限")
-    print("  • query_online_products_mcp - 查询在线产品")
+    print("  • query_asset_products_mcp - 查询资产下产品详情")
     print("  • query_enterprise_members_mcp - 查询企业成员")
+    print("  • add_enterprise_member_mcp - 添加企业成员")
     print("  • generate_client_token_mcp - 生成客户端令牌")
     print("  • generate_user_token_mcp - 生成用户令牌")
     print("=" * 50)
