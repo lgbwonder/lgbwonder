@@ -14,6 +14,9 @@ from pathlib import Path
 import requests
 from fastmcp import FastMCP
 from dotenv import load_dotenv
+import datetime
+import random
+import string
 
 # Load Environment Variables
 env_path = (Path(__file__).parent / "../system/.env").resolve()
@@ -96,6 +99,9 @@ logger = setup_logging(
 )
 
 # Global constants
+ORDER_URL = os.getenv("ORDER_URL")
+ORDER_APPKEY = os.getenv("ORDER_APPKEY")
+
 ASSET_URL = os.getenv("ASSET_URL")
 MEMBER_CLIENT_TOKEN_URL = os.getenv("MEMBER_CLIENT_TOKEN_URL")
 MEMBER_USER_TOKEN_URL = os.getenv("MEMBER_USER_TOKEN_URL")
@@ -508,6 +514,98 @@ def generate_user_token_mcp(uid: str = None, grantType: str = "uid") -> dict:
         logger.error(f"未知异常 - {error_msg}")
         return {"success": False, "error": error_msg, "type": "unknown_error"}
 
+@mcp.tool()
+def renew_asset_product_mcp(customerId: str, licenseId: str, 
+                           limitEndTime: int, limitStartTime: int = None) -> dict:
+    """资产下产品续费 - 为指定资产下的产品进行续费操作
+
+    参数说明：
+        customerId: 客户ID
+        licenseId: 许可证ID
+        limitEndTime: 结束时间戳（毫秒）
+        limitStartTime: 开始时间戳（毫秒），不指定时取当前时间
+
+    返回格式：
+        成功时返回API响应数据，失败时返回错误信息
+    """
+    try:
+        # 生成随机的channelOrderId（8位随机字符串 + 当前时间戳）
+        random_str = ''.join(random.choices(string.digits + string.ascii_lowercase, k=8))
+        current_timestamp = str(int(datetime.datetime.now().timestamp() * 1000))
+        channel_order_id = f"{current_timestamp}{random_str}"
+        
+        # 如果未指定开始时间，使用当前时间
+        if limitStartTime is None:
+            limitStartTime = int(datetime.datetime.now().timestamp() * 1000)
+        
+        # 构建请求数据，参考图片中的JSON结构
+        data = {
+            "channelOrderId": channel_order_id,
+            "syncMode": "async",
+            "orderList": [
+                {
+                    "sequence": "0",
+                    "customerId": customerId,
+                    "licenseType": "cloud_customer",
+                    "orderType": "renew_license",
+                    "assets": [
+                        {
+                            "products": [
+                                {
+                                    "licenseId": licenseId,
+                                    "limitEndDate": limitEndTime,
+                                    "limitStartDate": limitStartTime
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        url = f"{ORDER_URL}/api/order/v1/licenseOrder/batchOrder?appKey={ORDER_APPKEY}"
+        headers = {"Content-Type": "application/json"}
+
+        logger.info(f"产品续费 - 客户ID:{customerId}, 许可证ID:{licenseId}, 订单ID:{channel_order_id}")
+
+        # 发送请求
+        resp = requests.post(url, json=data, headers=headers, timeout=30)
+
+        # 检查响应状态
+        if resp.status_code == 200:
+            result = resp.json()
+            logger.info(f"续费成功 - 状态码:{resp.status_code}, 订单ID:{channel_order_id}")
+            return {
+                "success": True, 
+                "data": result, 
+                "message": "产品续费成功",
+                "channelOrderId": channel_order_id,
+                "customerId": customerId,
+                "licenseId": licenseId
+            }
+        else:
+            error_msg = f"接口调用失败，状态码: {resp.status_code}"
+            try:
+                error_detail = resp.json()
+                error_msg += f"，错误详情: {error_detail}"
+            except:
+                error_msg += f"，响应内容: {resp.text}"
+
+            logger.error(f"续费失败 - {error_msg}")
+            return {"success": False, "error": error_msg, "status_code": resp.status_code}
+
+    except requests.exceptions.RequestException as e:
+        error_msg = f"网络请求异常: {str(e)}"
+        logger.error(f"网络异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "network_error"}
+    except json.JSONDecodeError as e:
+        error_msg = f"响应解析异常: {str(e)}"
+        logger.error(f"解析异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "parse_error"}
+    except Exception as e:
+        error_msg = f"未知异常: {str(e)}"
+        logger.error(f"未知异常 - {error_msg}")
+        return {"success": False, "error": error_msg, "type": "unknown_error"}
 
 
 if __name__ == "__main__":
@@ -521,6 +619,7 @@ if __name__ == "__main__":
     print("  • add_enterprise_member_mcp - 添加企业成员")
     print("  • generate_client_token_mcp - 生成客户端令牌")
     print("  • generate_user_token_mcp - 生成用户令牌")
+    print("  • renew_asset_product_mcp - 资产下产品续费")
     print("=" * 50)
     print()
 
