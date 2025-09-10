@@ -128,7 +128,67 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
         assetStatus: 资产状态列表，可选值：["VALID", "EXPIRED", "UNASSIGNED", "ASSIGNED", "BORROWED", "ONLINED", "LOCKED"]
 
     返回格式：
-        成功时返回API响应数据，失败时返回错误信息
+        成功时返回结构化的资产列表数据，包含以下字段：
+        {
+            "success": true,
+            "data": {
+                "summary": {
+                    "totalAssets": 总资产数,
+                    "currentPage": 当前页码,
+                    "pageSize": 每页大小,
+                    "totalPages": 总页数,
+                    "searchType": 搜索类型,
+                    "searchCondition": 搜索条件,
+                    "assetStatus": 查询的资产状态列表,
+                    "statusCounts": {
+                        "VALID": 有效资产数,
+                        "EXPIRED": 过期资产数,
+                        "UNASSIGNED": 未分配资产数,
+                        "ASSIGNED": 已分配资产数,
+                        "BORROWED": 借出资产数,
+                        "ONLINED": 在线资产数,
+                        "LOCKED": 锁定资产数
+                    }
+                },
+                "assets": [
+                    {
+                        "assetId": "资产ID",
+                        "assetNum": "资产编号",
+                        "productName": "产品名称",
+                        "productUri": "产品URI",
+                        "status": "资产状态",
+                        "memberName": "分配成员姓名",
+                        "memberAccount": "分配成员账号",
+                        "memberId": "分配成员ID",
+                        "assignTime": "分配时间",
+                        "expireTime": "过期时间",
+                        "createTime": "创建时间",
+                        "updateTime": "更新时间",
+                        "onlineStatus": "在线状态",
+                        "borrowStatus": "借出状态",
+                        "lockStatus": "锁定状态"
+                    }
+                ],
+                "pagination": {
+                    "pageNum": 当前页码,
+                    "pageSize": 每页大小,
+                    "total": 总记录数,
+                    "pages": 总页数,
+                    "hasNextPage": 是否有下一页,
+                    "hasPrevPage": 是否有上一页
+                },
+                "rawData": 原始API响应数据
+            },
+            "message": "查询资产状态成功，共找到 X 个资产"
+        }
+        
+        失败时返回错误信息：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码,
+            "type": "错误类型"
+        }
     """
     try:
         url = f"{ASSET_URL}/v1/assets/manage/asset/status"
@@ -144,8 +204,79 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
         # 检查响应状态
         if resp.status_code == 200:
             result = resp.json()
-            logger.info(f"查询成功 - 状态码:{resp.status_code}")
-            return {"success": True, "data": result, "message": "查询资产状态成功"}
+            
+            # 解析API响应数据
+            api_data = result.get('data', {}) if isinstance(result, dict) else result
+            assets_list = api_data.get('list', []) if isinstance(api_data, dict) else []
+            pagination_info = api_data.get('pagination', {}) if isinstance(api_data, dict) else {}
+            
+            # 统计信息
+            total_assets = len(assets_list) if isinstance(assets_list, list) else 0
+            status_counts = {}
+            
+            # 处理资产数据，提取关键信息
+            processed_assets = []
+            if isinstance(assets_list, list):
+                for asset in assets_list:
+                    # 统计各状态数量
+                    status = asset.get('status', 'UNKNOWN')
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                    
+                    # 构建简化的资产信息
+                    asset_info = {
+                        "assetId": asset.get('assetId'),
+                        "assetNum": asset.get('assetNum'),
+                        "productName": asset.get('productName'),
+                        "productUri": asset.get('productUri'),
+                        "status": status,
+                        "memberName": asset.get('memberName'),
+                        "memberAccount": asset.get('memberAccount'),
+                        "memberId": asset.get('memberId'),
+                        "assignTime": asset.get('assignTime'),
+                        "expireTime": asset.get('expireTime'),
+                        "createTime": asset.get('createTime'),
+                        "updateTime": asset.get('updateTime'),
+                        "onlineStatus": asset.get('onlineStatus'),
+                        "borrowStatus": asset.get('borrowStatus'),
+                        "lockStatus": asset.get('lockStatus')
+                    }
+                    processed_assets.append(asset_info)
+            
+            # 计算分页信息
+            total_pages = pagination_info.get('pages', 1)
+            has_next_page = pageNum < total_pages
+            has_prev_page = pageNum > 1
+            
+            # 构建优化的返回格式
+            response_data = {
+                "summary": {
+                    "totalAssets": total_assets,
+                    "currentPage": pageNum,
+                    "pageSize": pageSize,
+                    "totalPages": total_pages,
+                    "searchType": searchType,
+                    "searchCondition": searchCondition,
+                    "assetStatus": assetStatus,
+                    "statusCounts": status_counts
+                },
+                "assets": processed_assets,
+                "pagination": {
+                    "pageNum": pageNum,
+                    "pageSize": pageSize,
+                    "total": pagination_info.get('total', total_assets),
+                    "pages": total_pages,
+                    "hasNextPage": has_next_page,
+                    "hasPrevPage": has_prev_page
+                },
+                "rawData": api_data  # 保留原始数据以备需要
+            }
+            
+            logger.info(f"查询成功 - 总资产数:{total_assets}, 当前页:{pageNum}, 总页数:{total_pages}")
+            return {
+                "success": True, 
+                "data": response_data, 
+                "message": f"查询资产状态成功，共找到 {total_assets} 个资产"
+            }
         else:
             error_msg = f"接口调用失败，状态码: {resp.status_code}"
             try:
@@ -177,9 +308,51 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
 
     参数说明：
         userToken: 用户认证令牌
+            - 类型: 字符串
+            - 必填: 是
+            - 说明: 用于身份验证的用户访问令牌，从 generate_user_token_mcp 获取
+        
         clientToken: 客户端认证令牌
-        assignType: 分配类型，可选值：assign(分配权限), unassign(取消分配权限)
-        assetPrivileges: 资产权限列表，每个项目包含：assetNum(资产编号), assetId(资产ID), memberId(成员ID)
+            - 类型: 字符串
+            - 必填: 是
+            - 说明: 用于客户端身份验证的令牌，从 generate_client_token_mcp 获取
+        
+        assignType: 分配类型
+            - 类型: 字符串
+            - 必填: 是
+            - 可选值: 
+                * "assign" - 分配权限给成员
+                * "unassign" - 取消分配权限（从成员处收回权限）
+            - 说明: 指定是分配还是取消分配资产权限
+        
+        assetPrivileges: 资产权限列表
+            - 类型: 列表
+            - 必填: 是
+            - 说明: 包含要操作的资产权限信息列表，每个元素为字典格式
+            - 列表元素结构:
+                {
+                    "assetNum": "资产编号",      # 必填，字符串，资产的唯一编号
+                    "assetId": "资产ID",        # 必填，字符串，资产的唯一标识ID
+                    "memberId": "成员ID"        # 必填，字符串，目标成员的唯一标识ID
+                }
+            - 示例:
+                [
+                    {
+                        "assetNum": "ASSET001",
+                        "assetId": "12345",
+                        "memberId": "member_001"
+                    },
+                    {
+                        "assetNum": "ASSET002", 
+                        "assetId": "12346",
+                        "memberId": "member_002"
+                    }
+                ]
+            - 注意事项:
+                * 可以同时操作多个资产权限
+                * 每个资产权限操作都是独立的
+                * 资产编号和资产ID必须对应同一个资产
+                * 成员ID必须是有效的企业成员
 
     返回格式：
         成功时返回API响应数据，失败时返回错误信息
@@ -281,15 +454,57 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
     参数说明：
         userToken: 用户认证令牌
         clientToken: 客户端认证令牌
+        keyword: 搜索关键词，支持按账号模糊搜索（可选）
 
     返回格式：
-        成功时返回API响应数据，失败时返回错误信息
+        成功时返回结构化的成员列表数据，包含以下字段：
+        {
+            "success": true,
+            "data": {
+                "summary": {
+                    "totalMembers": 总成员数,
+                    "onlineMembers": 在线成员数,
+                    "offlineMembers": 离线成员数,
+                    "membersWithAssets": 有资产分配的成员数,
+                    "searchKeyword": 搜索关键词
+                },
+                "members": [
+                    {
+                        "id": "成员ID",
+                        "userName": "用户名",
+                        "name": "姓名",
+                        "globalId": "全局ID",
+                        "departmentName": "部门名称",
+                        "onlineFlag": true/false,
+                        "assetCount": 分配的资产数量,
+                        "assetNums": ["资产编号1", "资产编号2", ...],
+                        "hasMoreAssets": true/false,
+                        "borrowNum": "借出锁编号",
+                        "createTime": "创建时间",
+                        "updateTime": "更新时间"
+                    }
+                ],
+                "rawData": 原始API响应数据
+            },
+            "message": "查询企业成员成功，共找到 X 名成员"
+        }
+        
+        失败时返回错误信息：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码,
+            "type": "错误类型"
+        }
     """
     try:
-        url = f"{ASSET_URL}/v1/assets/manage/members" + f"?keyword={keyword}"
+        url = f"{ASSET_URL}/v1/assets/manage/members"
+        if keyword:
+            url += f"?keyword={keyword}"
+        
         headers = {"userToken": userToken, "clientToken": clientToken}
 
-        logger.info("查询企业成员")
+        logger.info(f"查询企业成员 - 关键词: {keyword if keyword else '无'}")
 
         # 发送请求
         resp = requests.get(url, headers=headers, timeout=30)
@@ -297,8 +512,67 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
         # 检查响应状态
         if resp.status_code == 200:
             result = resp.json()
-            logger.info(f"查询成功 - 状态码:{resp.status_code}")
-            return {"success": True, "data": result, "message": "查询企业成员成功"}
+            
+            # 解析API响应数据
+            members_data = result.get('data', []) if isinstance(result, dict) else result
+            
+            # 统计信息
+            total_count = len(members_data) if isinstance(members_data, list) else 0
+            online_count = 0
+            offline_count = 0
+            assigned_assets_count = 0
+            
+            # 处理成员数据，提取关键信息
+            processed_members = []
+            if isinstance(members_data, list):
+                for member in members_data:
+                    # 统计在线状态
+                    if member.get('onlineFlag'):
+                        online_count += 1
+                    else:
+                        offline_count += 1
+                    
+                    # 统计分配资产数量
+                    asset_nums = member.get('assetNums', [])
+                    if asset_nums and len(asset_nums) > 0:
+                        assigned_assets_count += 1
+                    
+                    # 构建简化的成员信息
+                    member_info = {
+                        "id": member.get('id'),
+                        "userName": member.get('userName'),
+                        "name": member.get('name'),
+                        "globalId": member.get('globalId'),
+                        "departmentName": member.get('departmentName'),
+                        "onlineFlag": member.get('onlineFlag', False),
+                        "assetCount": len(asset_nums) if asset_nums else 0,
+                        "assetNums": asset_nums[:5] if asset_nums else [],  # 只显示前5个资产编号
+                        "hasMoreAssets": len(asset_nums) > 5 if asset_nums else False,
+                        "borrowNum": member.get('borrowNum'),
+                        "createTime": member.get('createTime'),
+                        "updateTime": member.get('updateTime')
+                    }
+                    processed_members.append(member_info)
+            
+            # 构建优化的返回格式
+            response_data = {
+                "summary": {
+                    "totalMembers": total_count,
+                    "onlineMembers": online_count,
+                    "offlineMembers": offline_count,
+                    "membersWithAssets": assigned_assets_count,
+                    "searchKeyword": keyword if keyword else None
+                },
+                "members": processed_members,
+                "rawData": members_data  # 保留原始数据以备需要
+            }
+            
+            logger.info(f"查询成功 - 总成员数:{total_count}, 在线:{online_count}, 离线:{offline_count}")
+            return {
+                "success": True, 
+                "data": response_data, 
+                "message": f"查询企业成员成功，共找到 {total_count} 名成员"
+            }
         else:
             error_msg = f"接口调用失败，状态码: {resp.status_code}"
             try:
