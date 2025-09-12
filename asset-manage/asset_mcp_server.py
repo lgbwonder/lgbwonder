@@ -207,7 +207,7 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
 
 @mcp.tool()
 def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: str, assetPrivileges: list) -> dict:
-    """分配/取消分配资产权限 - 为指定资产分配或取消分配权限给成员
+    """分配/取消分配资产权限 - 为指定资产分配或取消分配权限给成员，支持批量操作
 
     参数说明：
         userToken: 用户认证令牌
