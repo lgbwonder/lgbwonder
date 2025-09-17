@@ -87,22 +87,22 @@ class AssetManageAgent:
             # 从MCP服务器加载工具
             self._load_mcp_tools()
             
-                        # 创建简化的ReAct Agent提示模板
+                                    # 创建简化的ReAct Agent提示模板
             prompt = PromptTemplate.from_template("""
-                资产管理助手。用JSON格式调用工具。
+                资产管理助手。严格按照工具示例参数格式调用。
 
                 可用工具: {tools}
 
                 格式:
                 Question: {input}
-                Thought: 下一步行动
+                Thought: 下一步行动计划
                 Action: [{tool_names}] 中的工具名
-                Action Input: JSON参数
+                Action Input: 完整JSON参数（严格按照示例格式）
                 Observation: 结果
-                Final Answer: 答案
+                Final Answer: 最终答案
 
-                规则: 用完整JSON，包含所有必需参数
-                流程: 获取令牌→查询→分配
+                重要: Action Input必须是有效JSON，数组用[]，字符串用""
+                示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED"]}}
 
                 {agent_scratchpad}
                 """)
@@ -171,15 +171,15 @@ class AssetManageAgent:
         # 只保留核心描述，简化参数示例
         tool_descriptions = {
             "query_assets_by_status_mcp": 
-                "查询资产状态。参数: userToken, clientToken, searchType(productName), searchCondition, assetStatus([UNASSIGNED])",
+                '查询资产状态。示例参数: {"userToken": "令牌", "clientToken": "令牌", "searchType": "productName", "searchCondition": "广联达云锁", "assetStatus": ["UNASSIGNED"], "pageNum": 1, "pageSize": 20}',
             "allocate_asset_privileges_mcp": 
-                "分配资产权限。参数: userToken, clientToken, assignType(assign), assetPrivileges",
+                '分配资产权限。示例参数: {"userToken": "令牌", "clientToken": "令牌", "assignType": "assign", "assetPrivileges": [{"assetNum": "编号", "assetId": "ID", "memberId": "成员ID"}]}',
             "query_enterprise_members_mcp": 
-                "查询企业成员。参数: userToken, clientToken, keyword",
+                '查询企业成员。示例参数: {"userToken": "令牌", "clientToken": "令牌", "keyword": ""}',
             "generate_client_token_mcp": 
-                "生成客户端令牌。参数: grantType(client_credentials)",
+                '生成客户端令牌。示例参数: {"grantType": "client_credentials"}',
             "generate_user_token_mcp": 
-                "生成用户令牌。参数: uid, grantType(uid)"
+                '生成用户令牌。示例参数: {"uid": "7252116979775435633", "grantType": "uid"}'
         }
         
         return tool_descriptions.get(tool_name, description[:100])
@@ -234,8 +234,17 @@ class AssetManageAgent:
                 args["searchType"] not in valid_search_types):
                 return f"searchType必须是: {', '.join(valid_search_types)} 中的一个"
             
-            if "assetStatus" in args and not isinstance(args["assetStatus"], list):
-                return "assetStatus必须是列表格式"
+            # 自动修复 assetStatus 格式
+            if "assetStatus" in args:
+                if isinstance(args["assetStatus"], str):
+                    # 如果是字符串，尝试转换为列表
+                    try:
+                        args["assetStatus"] = [args["assetStatus"]]
+                        logger.info(f"自动修复 assetStatus 格式: {args['assetStatus']}")
+                    except:
+                        return "assetStatus格式错误，应为状态字符串或状态列表"
+                elif not isinstance(args["assetStatus"], list):
+                    return "assetStatus必须是列表格式"
         
         return None
     
