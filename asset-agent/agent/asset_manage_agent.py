@@ -55,10 +55,10 @@ class AssetManageAgent:
         self.mcp_client = MCPClient(mcp_server_url)
         
         # 配置LLM，添加超时和错误处理
-        model = os.getenv("QWEN_MODEL", "deepseek-reasoner")
+        model = os.getenv("QWEN_MODEL", "qwen-plus")
         temperature = float(os.getenv("QWEN_TEMPERATURE", "0.1"))
-        api_key = os.getenv("QWEN_API_KEY", "sk-b5d2dc7a98fd46aabdd79525a9760024")
-        base_url = os.getenv("QWEN_BASE_URL", "https://api.deepseek.com/v1")
+        api_key = os.getenv("QWEN_API_KEY", "sk-8fe5cd468cd241d2b7fd2849468bcfde")
+        base_url = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         
         if not api_key:
             logger.warning("QWEN_API_KEY 环境变量未设置，LLM功能可能无法正常工作")
