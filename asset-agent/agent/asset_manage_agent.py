@@ -87,23 +87,41 @@ class AssetManageAgent:
             # 从MCP服务器加载工具
             self._load_mcp_tools()
             
-                                    # 创建简化的ReAct Agent提示模板
+                        # 创建简化的ReAct Agent提示模板
             prompt = PromptTemplate.from_template("""
-                资产管理助手。严格按照工具示例参数格式调用。
+                你是资产管理助手。能够理解自然语言并完成完整的多步骤任务流程。
 
                 可用工具: {tools}
 
+                任务流程:
+                1. 获取认证令牌 (generate_client_token_mcp, generate_user_token_mcp)
+                2. 创建或查询成员 (add_enterprise_member_mcp, query_enterprise_members_mcp)
+                3. 查询资产状态 (query_assets_by_status_mcp)
+                4. 分配资产权限 (allocate_asset_privileges_mcp)
+
+                自然语言理解指南:
+                - "创建账号XXX" → userName="XXX", name="XXX"（如果没有明确姓名）
+                - "密码为XXX" → password="XXX"
+                - "密保手机为XXX" → passwordMobile="XXX"
+                - "查询未分配资产" → assetStatus=["UNASSIGNED"]
+
                 格式:
                 Question: {input}
-                Thought: 下一步行动计划
+                Thought: 分析用户需求，提取关键信息，规划下一步行动
                 Action: [{tool_names}] 中的工具名
                 Action Input: 完整JSON参数（严格按照示例格式）
-                Observation: 结果
-                Final Answer: 最终答案
+                Observation: 工具执行结果
+                ... (继续执行直到完成所有必要步骤)
+                Final Answer: 任务完成总结
 
-                重要: Action Input必须是有效JSON，数组用[]，字符串用""
-                示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED"]}}
-
+                重要规则:
+                - Action Input必须是有效JSON，数组用[]，字符串用""
+                - 示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED"]}}
+                - 必须完成完整流程，不要在中途停止
+                - 每个步骤都要检查结果是否成功
+                - 从用户自然语言中智能提取参数信息
+                - mcp工具调用时参数类型、参数个数严格按照接口描述进行传递
+                - 新成员的 globalId 不为 memberId
                 {agent_scratchpad}
                 """)
             
@@ -114,11 +132,12 @@ class AssetManageAgent:
             self.agent_executor = AgentExecutor(
                 agent=agent,
                 tools=self.tools,
-                verbose=False,                      # 关闭详细输出以提高性能
-                max_iterations=4,                   # 减少迭代次数以提高速度
-                max_execution_time=60,              # 减少到1分钟
+                verbose=False,                       # 启用详细输出以便调试
+                max_iterations=8,                   # 增加迭代次数以支持多步骤任务
+                max_execution_time=120,             # 增加到2分钟
                 return_intermediate_steps=True,
-                handle_parsing_errors=True
+                handle_parsing_errors=True,
+                early_stopping_method="force"      # 确保使用正确的停止方法
             )
             
             logger.info(f"ReAct Agent初始化完成，加载了 {len(self.tools)} 个工具")
@@ -146,13 +165,10 @@ class AssetManageAgent:
                 if not tool_name:
                     continue
                 
-                # 创建LangChain Tool对象，增强描述信息
-                enhanced_description = self._enhance_tool_description(
-                    tool_name, tool_description, tool_info
-                )
+                # 创建LangChain Tool对象
                 langchain_tool = Tool(
                     name=tool_name,
-                    description=enhanced_description,
+                    description=tool_description,
                     func=lambda args, name=tool_name: self._call_mcp_tool(name, args)
                 )
                 
@@ -164,68 +180,73 @@ class AssetManageAgent:
             logger.error(f"加载MCP工具失败: {str(e)}")
             raise e
     
-    def _enhance_tool_description(
-        self, tool_name: str, description: str, tool_info: Dict
-    ) -> str:
-        """增强工具描述，简化参数信息以提高速度"""
-        # 只保留核心描述，简化参数示例
-        tool_descriptions = {
-            "query_assets_by_status_mcp": 
-                '查询资产状态。示例参数: {"userToken": "令牌", "clientToken": "令牌", "searchType": "productName", "searchCondition": "广联达云锁", "assetStatus": ["UNASSIGNED"], "pageNum": 1, "pageSize": 20}',
-            "allocate_asset_privileges_mcp": 
-                '分配资产权限。示例参数: {"userToken": "令牌", "clientToken": "令牌", "assignType": "assign", "assetPrivileges": [{"assetNum": "编号", "assetId": "ID", "memberId": "成员ID"}]}',
-            "query_enterprise_members_mcp": 
-                '查询企业成员。示例参数: {"userToken": "令牌", "clientToken": "令牌", "keyword": ""}',
-            "generate_client_token_mcp": 
-                '生成客户端令牌。示例参数: {"grantType": "client_credentials"}',
-            "generate_user_token_mcp": 
-                '生成用户令牌。示例参数: {"uid": "7252116979775435633", "grantType": "uid"}'
-        }
-        
-        return tool_descriptions.get(tool_name, description[:100])
-    
     def _validate_tool_parameters(
         self, tool_name: str, args: Dict
     ) -> Optional[str]:
-        """验证工具参数"""
-        required_params = {
-            "query_assets_by_status_mcp": [
-                "userToken", "clientToken", "searchType", 
-                "searchCondition", "assetStatus"
-            ],
-            "allocate_asset_privileges_mcp": [
-                "userToken", "clientToken", "assignType", "assetPrivileges"
-            ],
-            "query_enterprise_members_mcp": [
-                "userToken", "clientToken"
-            ],
-            "generate_client_token_mcp": [
-                "grantType"
-            ],
-            "generate_user_token_mcp": [
-                "grantType"
-            ],
-            "query_asset_products_mcp": [
-                "userToken", "clientToken", "assetId"
-            ],
-            "add_enterprise_member_mcp": [
-                "userToken", "userName", "password", "name"
-            ],
-            "renew_asset_product_mcp": [
-                "customerId", "licenseId", "limitEndTime"
-            ]
+        """验证工具参数，并进行智能补全和过滤"""
+        # 定义每个工具的必需参数和可选参数
+        tool_params = {
+            "query_assets_by_status_mcp": {
+                "required": ["userToken", "clientToken", "searchType", "searchCondition", "assetStatus"],
+                "optional": ["pageNum", "pageSize"]
+            },
+            "allocate_asset_privileges_mcp": {
+                "required": ["userToken", "clientToken", "assignType", "assetPrivileges"],
+                "optional": []
+            },
+            "query_enterprise_members_mcp": {
+                "required": ["userToken", "clientToken"],
+                "optional": ["keyword"]
+            },
+            "generate_client_token_mcp": {
+                "required": ["grantType"],
+                "optional": []
+            },
+            "generate_user_token_mcp": {
+                "required": ["grantType"],
+                "optional": ["uid"]
+            },
+            "query_asset_products_mcp": {
+                "required": ["userToken", "clientToken", "assetId"],
+                "optional": []
+            },
+            "add_enterprise_member_mcp": {
+                "required": ["userToken", "userName", "password", "name"],
+                "optional": ["departmentId", "remark", "passwordMobile", "regionCode"]
+            },
+            "renew_asset_product_mcp": {
+                "required": ["customerId", "licenseId", "limitEndTime"],
+                "optional": ["limitStartTime"]
+            }
         }
         
-        if tool_name in required_params:
+        if tool_name in tool_params:
+            tool_config = tool_params[tool_name]
+            required_params = tool_config["required"]
+            allowed_params = tool_config["required"] + tool_config["optional"]
+            
+            # 过滤掉不需要的参数
+            filtered_args = {}
+            for key, value in args.items():
+                if key in allowed_params:
+                    filtered_args[key] = value
+                else:
+                    logger.debug(f"过滤掉不需要的参数: {key}")
+            
+            # 更新args为过滤后的参数
+            args.clear()
+            args.update(filtered_args)
+            
+            # 检查必需参数
             missing_params = []
-            for param in required_params[tool_name]:
+            for param in required_params:
                 if param not in args:
                     missing_params.append(param)
             
             if missing_params:
                 return f"缺少必需参数: {', '.join(missing_params)}。请提供完整的参数。"
         
-        # 特殊验证
+        # 特殊验证和修复
         if tool_name == "query_assets_by_status_mcp":
             valid_search_types = [
                 "productUri", "productName", "assetNum", "memberAccount"

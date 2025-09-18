@@ -118,17 +118,19 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
                                assetStatus: list, pageNum: int = 1, pageSize: int = 20) -> dict:
     """查询资产状态 - 根据状态查询企业资产信息，支持分页
 
-    参数说明：
-        userToken: 用户认证令牌
-        clientToken: 客户端认证令牌
-        pageNum: 页码，默认为1
-        pageSize: 每页大小，默认为20
-        searchType: 搜索类型，可选值：productUri, productName, assetNum, memberAccount
-        searchCondition: 搜索条件
-        assetStatus: 资产状态列表，可选值：["VALID", "EXPIRED", "UNASSIGNED", "ASSIGNED", "BORROWED", "ONLINED", "LOCKED"]
+    Args:
+        userToken (str): 用户认证令牌
+        clientToken (str): 客户端认证令牌
+        searchType (str): 搜索类型，可选值：productUri, productName, assetNum, memberAccount
+        searchCondition (str): 搜索条件，不指定具体搜索条件时，需要传递 ""
+        assetStatus (list): 资产状态列表，可选值：["VALID", "EXPIRED", "UNASSIGNED", "ASSIGNED", "BORROWED", "ONLINED", "LOCKED"]
+        pageNum (int, optional): 页码，默认为1
+        pageSize (int, optional): 每页大小，默认为20
 
-    返回格式：
-        成功时返回API原始响应数据，包含以下字段：
+    Returns:
+        dict: API原始响应数据，包含以下完整结构：
+        
+        成功时返回：
         {
             "success": true,
             "message": "success",
@@ -138,7 +140,7 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
                     {
                         "asset": {
                             "assetNum": "资产编号",
-                            "assetId": "资产ID",
+                            "assetId": "资产ID", 
                             "assetStatus": ["资产状态列表"],
                             "limitStartDate": 开始时间戳,
                             "limitEndDate": 结束时间戳,
@@ -147,7 +149,7 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
                         "member": {
                             "memberName": "成员姓名",
                             "memberId": "成员ID",
-                            "memberAccount": "成员账号",
+                            "memberAccount": "成员账号", 
                             "globalId": "全局ID",
                             "memberPhone": "成员手机号"
                         },
@@ -157,10 +159,10 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
             }
         }
         
-        失败时返回错误信息：
+        失败时返回：
         {
             "success": false,
-            "message": "错误描述",
+            "message": "错误描述", 
             "data": null
         }
     """
@@ -209,56 +211,51 @@ def query_assets_by_status_mcp(userToken: str, clientToken: str, searchType: str
 def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: str, assetPrivileges: list) -> dict:
     """分配/取消分配资产权限 - 为指定资产分配或取消分配权限给成员，支持批量操作
 
-    参数说明：
-        userToken: 用户认证令牌
-            - 类型: 字符串
-            - 必填: 是
-            - 说明: 用于身份验证的用户访问令牌，从 generate_user_token_mcp 获取
-        
-        clientToken: 客户端认证令牌
-            - 类型: 字符串
-            - 必填: 是
-            - 说明: 用于客户端身份验证的令牌，从 generate_client_token_mcp 获取
-        
-        assignType: 分配类型
-            - 类型: 字符串
-            - 必填: 是
-            - 可选值: 
-                * "assign" - 分配权限给成员
-                * "unassign" - 取消分配权限（从成员处收回权限）
-            - 说明: 指定是分配还是取消分配资产权限
-        
-        assetPrivileges: 资产权限列表
-            - 类型: 列表
-            - 必填: 是
-            - 说明: 包含要操作的资产权限信息列表，每个元素为字典格式
-            - 列表元素结构:
-                {
-                    "assetNum": "资产编号",      # 必填，字符串，资产的唯一编号
-                    "assetId": "资产ID",        # 必填，字符串，资产的唯一标识ID
-                    "memberId": "成员ID"        # 必填，字符串，目标成员的唯一标识ID
-                }
-            - 示例:
-                [
-                    {
-                        "assetNum": "ASSET001",
-                        "assetId": "12345",
-                        "memberId": "member_001"
-                    },
-                    {
-                        "assetNum": "ASSET002", 
-                        "assetId": "12346",
-                        "memberId": "member_002"
-                    }
-                ]
-            - 注意事项:
-                * 可以同时操作多个资产权限
-                * 每个资产权限操作都是独立的
-                * 资产编号和资产ID必须对应同一个资产
-                * 成员ID必须是有效的企业成员
+    Args:
+        userToken (str): 用户认证令牌，从 generate_user_token_mcp 获取
+        clientToken (str): 客户端认证令牌，从 generate_client_token_mcp 获取
+        assignType (str): 分配类型，可选值："assign"(分配权限)或"unassign"(取消分配权限)
+        assetPrivileges (list): 资产权限列表，每个元素为包含以下字段的字典：
+            - assetNum (str): 资产编号，必填
+            - assetId (str): 资产ID，必填  
+            - memberId (str): 授权成员ID，必填
 
-    返回格式：
-        成功时返回API响应数据，失败时返回错误信息
+    Returns:
+        dict: API原始响应数据
+        
+        成功时返回：
+        {
+            "success": true,
+            "data": API响应结果,
+            "message": "资产权限{assignType}操作成功"
+        }
+        
+        失败时返回：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码
+        }
+        
+    Example:
+        assetPrivileges = [
+            {
+                "assetNum": "ASSET001",
+                "assetId": "12345",
+                "memberId": "member_001"
+            },
+            {
+                "assetNum": "ASSET002", 
+                "assetId": "12346",
+                "memberId": "member_002"
+            }
+        ]
+        
+    Note:
+        - 可以同时操作多个资产权限
+        - 每个资产权限操作都是独立的
+        - 资产编号和资产ID必须对应同一个资产
+        - 成员ID必须是有效的企业成员
     """
     try:
         url = f"{ASSET_URL}/v1/assets/manage/asset/{assignType}/privileges"
@@ -303,13 +300,15 @@ def allocate_asset_privileges_mcp(userToken: str, clientToken: str, assignType: 
 def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> dict:
     """查询资产产品详情 - 查询指定资产的云锁产品详情信息
 
-    参数说明：
-        userToken: 用户认证令牌
-        clientToken: 客户端认证令牌
-        assetId: 资产ID
+    Args:
+        userToken (str): 用户认证令牌
+        clientToken (str): 客户端认证令牌
+        assetId (str): 资产ID
 
-    返回格式：
-        成功时返回API原始响应数据，包含以下字段：
+    Returns:
+        dict: API原始响应数据，包含以下完整结构：
+        
+        成功时返回：
         {
             "success": true,
             "message": "success",
@@ -321,7 +320,7 @@ def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> 
                         "licenseType": "许可证类型",
                         "customerId": "客户ID",
                         "assetId": "资产ID",
-                        "assetInsId": "资产实例ID",
+                        "assetInsId": "资产实例ID", 
                         "merchandiseInsId": "商品实例ID",
                         "assetNum": "资产编号",
                         "productUri": "产品URI",
@@ -360,7 +359,7 @@ def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> 
                                 "limitValueType": "限制值类型",
                                 "trial": "试用标识",
                                 "trialEndDate": "试用结束日期",
-                                "createTime": "创建时间",
+                                "createTime": "创建时间", 
                                 "updateTime": "更新时间",
                                 "limitName": "限制名称"
                             }
@@ -370,7 +369,7 @@ def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> 
             }
         }
         
-        失败时返回错误信息：
+        失败时返回：
         {
             "success": false,
             "message": "错误描述",
@@ -420,13 +419,15 @@ def query_asset_products_mcp(userToken: str, clientToken: str, assetId: str) -> 
 def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str = '') -> dict:
     """查询企业成员 - 获取企业下的成员列表
 
-    参数说明：
-        userToken: 用户认证令牌
-        clientToken: 客户端认证令牌
-        keyword: 搜索关键词，支持按账号模糊搜索（可选）
+    Args:
+        userToken (str): 用户认证令牌
+        clientToken (str): 客户端认证令牌
+        keyword (str, optional): 搜索关键词，支持按账号模糊搜索，默认为空
 
-    返回格式：
-        成功时返回API原始响应数据，包含以下字段：
+    Returns:
+        dict: API原始响应数据，包含以下完整结构：
+        
+        成功时返回：
         {
             "success": true,
             "message": "success",
@@ -453,7 +454,7 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
             ]
         }
         
-        失败时返回错误信息：
+        失败时返回：
         {
             "success": false,
             "message": "错误描述",
@@ -505,20 +506,48 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
 def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name: str,
                               departmentId: int = None, remark: str = None,
                               passwordMobile: str = None, regionCode: str = None) -> dict:
-    """添加企业成员 - 为企业添加新成员
+    """添加用户中心成员 - 成功时返回的ID并非授权成员ID
 
-    参数说明：
-        userToken: 用户认证令牌
-        userName: 账号名称，只能包含字母和数字，长度2-30个字符
-        password: 初始密码，8-16个字符，必须包含至少两种字符类型（数字、字母、符号）
-        name: 用户全名，最多30个字符
-        departmentId: 部门ID（可选）
-        remark: 备注信息，最多200个字符（可选）
-        passwordMobile: 安全手机号，用于密码找回（可选）
-        regionCode: 安全手机号的区域代码，仅国际站点有效（可选）
+    Args:
+        userToken (str): 用户认证令牌
+        userName (str): 账号名称，只能包含字母和数字，长度2-30个字符
+        password (str): 初始密码，8-16个字符，必须包含至少两种字符类型（数字、字母、符号）
+        name (str): 用户全名，最多30个字符
+        departmentId (int, optional): 部门ID，可选
+        remark (str, optional): 备注信息，最多200个字符，可选
+        passwordMobile (str, optional): 安全手机号，用于密码找回，可选
+        regionCode (str, optional): 安全手机号的区域代码，仅国际站点有效，可选
 
-    返回格式：
-        成功时返回API响应数据，失败时返回错误信息
+    Returns:
+        dict: API原始响应数据
+        
+        成功时返回：
+        {
+         "code": 0,
+         "message": "OK",
+         "data": {
+                 "id": 1260628957136352,//用户中心成员id
+                 "userId": 6357051057240272929,//用户中心用户id
+                 "globalId": "6357051057240272929",//用户中心globalId
+                 "enterpriseId": 6339382805877858516,//企业id
+                 "departmentId": null,//部门id
+                 "departmentName": null,//部门名称
+                 "userName": "测试账号@liuyjTest",//用户中心成员账号
+                 "name": "测试姓名",//用户姓名
+                 "remark": null,//备注
+                 "deleted": false,//是否删除
+                 "passwordMobile": "11010001000",//密保手机
+                 "updateTime": 1515639113000,
+                 "createTime": 1515639113000
+            }
+        }
+        
+        失败时返回：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码
+        }
     """
     try:
         headers = {
@@ -579,7 +608,31 @@ def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name
 
 @mcp.tool()
 def generate_client_token_mcp(grantType: str = "client_credentials") -> dict:
-    """生成客户端令牌 - 通过OAuth2客户端凭据流程获取访问令牌"""
+    """生成客户端令牌 - 通过OAuth2客户端凭据流程获取访问令牌
+
+    Args:
+        grantType (str, optional): 授权类型，固定为"client_credentials"，默认已设置
+
+    Returns:
+        dict: API原始响应数据，包含访问令牌信息
+        
+        成功时返回：
+        {
+            "success": true,
+            "data": API响应结果,
+            "message": "客户端令牌生成成功",
+            "access_token": "访问令牌",
+            "token_type": "令牌类型",
+            "expires_in": 过期时间秒数
+        }
+        
+        失败时返回：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码
+        }
+    """
     try:
         headers = {
             "Authorization": f"Basic {MEMBER_CLIENT_TOKEN_HEADER}",
@@ -632,12 +685,30 @@ def generate_client_token_mcp(grantType: str = "client_credentials") -> dict:
 def generate_user_token_mcp(uid: str = None, grantType: str = "uid") -> dict:
     """生成用户令牌 - 通过OAuth2 UID流程获取用户访问令牌
 
-    参数说明：
-        uid: 用户ID
-        grantType: 授权类型，默认为 "uid"
+    Args:
+        uid (str, optional): 用户ID，可选
+        grantType (str, optional): 授权类型，固定为"uid"，默认已设置
 
-    返回格式：
-        成功时返回包含访问令牌的响应数据，失败时返回错误信息
+    Returns:
+        dict: API原始响应数据，包含用户访问令牌信息
+        
+        成功时返回：
+        {
+            "success": true,
+            "data": API响应结果,
+            "message": "用户令牌生成成功",
+            "access_token": "访问令牌",
+            "token_type": "令牌类型",
+            "expires_in": 过期时间秒数,
+            "uid": "用户ID"
+        }
+        
+        失败时返回：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码
+        }
     """
     try:
         headers = {
@@ -697,14 +768,31 @@ def renew_asset_product_mcp(customerId: str, licenseId: str,
                            limitEndTime: int, limitStartTime: int = None) -> dict:
     """资产下产品续费 - 为指定资产下的产品进行续费操作
 
-    参数说明：
-        customerId: 客户ID
-        licenseId: 许可证ID
-        limitEndTime: 结束时间戳（毫秒）
-        limitStartTime: 开始时间戳（毫秒），不指定时取当前时间
+    Args:
+        customerId (str): 客户ID
+        licenseId (str): 许可证ID
+        limitEndTime (int): 结束时间戳（毫秒）
+        limitStartTime (int, optional): 开始时间戳（毫秒），不指定时取当前时间
 
-    返回格式：
-        成功时返回API响应数据，失败时返回错误信息
+    Returns:
+        dict: API原始响应数据
+        
+        成功时返回：
+        {
+            "success": true,
+            "data": API响应结果,
+            "message": "产品续费成功",
+            "channelOrderId": "渠道订单ID",
+            "customerId": "客户ID",
+            "licenseId": "许可证ID"
+        }
+        
+        失败时返回：
+        {
+            "success": false,
+            "error": "错误描述",
+            "status_code": HTTP状态码
+        }
     """
     try:
         # 生成随机的channelOrderId（8位随机字符串 + 当前时间戳）
@@ -802,4 +890,4 @@ if __name__ == "__main__":
     print()
 
     # Run the server using FastMCP
-    mcp.run(transport="sse", host=os.getenv("ASSET_SERVER_HOST"), port=int(os.getenv("ASSET_SERVER_PORT")))
+    mcp.run(transport="streamable-http", host=os.getenv("ASSET_SERVER_HOST"), port=int(os.getenv("ASSET_SERVER_PORT")))
