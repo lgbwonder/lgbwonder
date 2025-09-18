@@ -1,19 +1,15 @@
 # -*- coding: utf-8 -*-
 #!/usr/bin/env python3
 """
-基于ReActAgent的智能资产管理Agent
-
-该Agent能够实时获取MCP服务器的工具并动态调用，实现智能的资产分配决策和操作。
+基于ReActAgent的智能资产管理Agent (优化版：支持并发安全)
 """
 
 import os
 import json
 import logging
-import asyncio
 from typing import Dict, List, Any, Optional, TypedDict
 from datetime import datetime
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain_core.tools import Tool
@@ -23,7 +19,6 @@ from langchain_core.prompts import PromptTemplate
 try:
     from ..utils.mcp_client import MCPClient
 except ImportError:
-    # 支持直接运行脚本
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,6 +26,7 @@ except ImportError:
 
 # 获取当前模块的日志记录器
 logger = logging.getLogger(__name__)
+
 
 class AssetAllocationState(TypedDict):
     """资产分配状态"""
@@ -44,375 +40,176 @@ class AssetAllocationState(TypedDict):
     error_message: Optional[str]
     mcp_tools: List[Dict[str, Any]]
 
+
 class AssetManageAgent:
-    """智能资产管理Agent - 基于ReAct模式"""
-    
+    """智能资产管理Agent - 基于ReAct模式（优化并发安全）"""
+
     def __init__(self, mcp_server_url: str = None):
-        # 从环境变量获取MCP服务器地址，如果没有则使用默认值
         if mcp_server_url is None:
             mcp_server_url = os.getenv("MCP_SERVER_URL")
-        
+
         self.mcp_client = MCPClient(mcp_server_url)
-        
-        # 配置LLM，添加超时和错误处理
+
+        # 配置LLM
         model = os.getenv("QWEN_MODEL", "qwen-plus")
-        temperature = float(os.getenv("QWEN_TEMPERATURE", "0.1"))
+        temperature = float(os.getenv("QWEN_TEMPERATURE", "0"))
         api_key = os.getenv("QWEN_API_KEY", "sk-8fe5cd468cd241d2b7fd2849468bcfde")
         base_url = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        
+
         if not api_key:
             logger.warning("QWEN_API_KEY 环境变量未设置，LLM功能可能无法正常工作")
-        
+
         self.llm = ChatOpenAI(
             model=model,
             temperature=temperature,
             api_key=api_key,
             base_url=base_url,
-            timeout=30,                             # 减少到30秒超时
-            max_retries=1,                          # 减少重试次数
-            request_timeout=30,                     # 请求超时30秒
-            max_tokens=1000                         # 限制最大输出长度
+            timeout=30,
+            max_retries=3,         # 提高重试次数，避免一次失败就终止
+            request_timeout=30,
+            max_tokens=2000        # 增大输出限制，支持长结果
         )
-        
-        # 初始化工具和代理
-        self.tools = []
-        self.agent_executor = None
-        self._initialize_agent()
-        
+
+        # 缓存工具
+        self.tools: List[Tool] = []
+        self._load_mcp_tools()
+
+        # 缓存Agent提示模板
+        self._prompt = self._build_prompt()
+
         logger.debug(f"Agent初始化完成，MCP服务器: {mcp_server_url}")
-    
-    def _initialize_agent(self):
-        """初始化ReAct Agent"""
-        try:
-            # 从MCP服务器加载工具
-            self._load_mcp_tools()
-            
-                        # 创建简化的ReAct Agent提示模板
-            prompt = PromptTemplate.from_template("""
-                你是资产管理助手。能够理解自然语言并完成完整的多步骤任务流程。
 
-                可用工具: {tools}
+    def _build_prompt(self) -> PromptTemplate:
+        """构建提示模板"""
+        return PromptTemplate.from_template("""
+            你是资产管理助手。能够理解自然语言并完成完整的多步骤任务流程。
 
-                任务流程:
-                1. 获取认证令牌 (generate_client_token_mcp, generate_user_token_mcp)
-                2. 创建或查询成员 (add_enterprise_member_mcp, query_enterprise_members_mcp)
-                3. 查询资产状态 (query_assets_by_status_mcp)
-                4. 分配资产权限 (allocate_asset_privileges_mcp)
+            可用工具: {tools}
 
-                自然语言理解指南:
-                - "创建账号XXX" → userName="XXX", name="XXX"（如果没有明确姓名）
-                - "密码为XXX" → password="XXX"
-                - "密保手机为XXX" → passwordMobile="XXX"
-                - "查询未分配资产" → assetStatus=["UNASSIGNED"]
+            任务流程:
+            1. 获取认证令牌 (generate_client_token_mcp, generate_user_token_mcp)
+            2. 创建或查询成员 (add_enterprise_member_mcp, query_enterprise_members_mcp)
+            3. 查询资产状态 (query_assets_by_status_mcp)
+            4. 分配资产权限 (allocate_asset_privileges_mcp)
 
-                格式:
-                Question: {input}
-                Thought: 分析用户需求，提取关键信息，规划下一步行动
-                Action: [{tool_names}] 中的工具名
-                Action Input: 完整JSON参数（严格按照示例格式）
-                Observation: 工具执行结果
-                ... (继续执行直到完成所有必要步骤)
-                Final Answer: 任务完成总结
+            自然语言理解指南:
+            - "创建账号XXX" → userName="XXX", name="XXX"
+            - "密码为XXX" → password="XXX"
+            - "密保手机为XXX" → passwordMobile="XXX"
+            - "查询未分配资产" → assetStatus=["UNASSIGNED", "VALID"]
 
-                重要规则:
-                - Action Input必须是有效JSON，数组用[]，字符串用""
-                - 示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED"]}}
-                - 必须完成完整流程，不要在中途停止
-                - 每个步骤都要检查结果是否成功
-                - 从用户自然语言中智能提取参数信息
-                - mcp工具调用时参数类型、参数个数严格按照接口描述进行传递
-                - 新成员的 globalId 不为 memberId
-                {agent_scratchpad}
-                """)
-            
-            # 创建ReAct Agent
-            agent = create_react_agent(self.llm, self.tools, prompt)
-            
-            # 创建Agent执行器
-            self.agent_executor = AgentExecutor(
-                agent=agent,
-                tools=self.tools,
-                verbose=False,                       # 启用详细输出以便调试
-                max_iterations=8,                   # 增加迭代次数以支持多步骤任务
-                max_execution_time=120,             # 增加到2分钟
-                return_intermediate_steps=True,
-                handle_parsing_errors=True,
-                early_stopping_method="force"      # 确保使用正确的停止方法
-            )
-            
-            logger.info(f"ReAct Agent初始化完成，加载了 {len(self.tools)} 个工具")
-            
-        except Exception as e:
-            logger.error(f"初始化Agent失败: {str(e)}")
-            raise e
-    
+            格式:
+            Question: {input}
+            Thought: 分析用户需求，提取关键信息，规划下一步行动
+            Action: [{tool_names}] 中的工具名
+            Action Input: 完整JSON参数
+            Observation: 工具执行结果
+            ... (继续执行直到完成所有必要步骤)
+            Final Answer: 任务完成总结
+
+            重要规则:
+            - Action Input必须是有效JSON，数组用[]，字符串用""
+            - 示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED", "VALID"]}}
+            - 必须完成完整流程，不要在中途停止
+            - 每个步骤都要检查结果是否成功
+            - 从用户自然语言中智能提取参数信息
+            - mcp工具调用时参数类型、参数个数严格按照接口描述进行传递
+            - 新成员的 globalId 不为 memberId
+            {agent_scratchpad}
+        """)
+
     def _load_mcp_tools(self):
         """从MCP服务器加载工具"""
         try:
             tools_result = self.mcp_client.get_tools()
-            
+
             if not tools_result.get("success"):
                 logger.error(f"获取MCP工具失败: {tools_result.get('error')}")
                 return
-            
+
             mcp_tools = tools_result.get("data", [])
             self.tools = []
-            
+
             for tool_info in mcp_tools:
                 tool_name = tool_info.get("name")
                 tool_description = tool_info.get("description", "")
-                
+
                 if not tool_name:
                     continue
-                
-                # 创建LangChain Tool对象
+
                 langchain_tool = Tool(
                     name=tool_name,
                     description=tool_description,
                     func=lambda args, name=tool_name: self._call_mcp_tool(name, args)
                 )
-                
                 self.tools.append(langchain_tool)
-            
-            logger.debug(f"加载了 {len(self.tools)} 个MCP工具")
-            
+
+            logger.info(f"加载了 {len(self.tools)} 个MCP工具")
+
         except Exception as e:
             logger.error(f"加载MCP工具失败: {str(e)}")
             raise e
-    
-    def _validate_tool_parameters(
-        self, tool_name: str, args: Dict
-    ) -> Optional[str]:
-        """验证工具参数，并进行智能补全和过滤"""
-        # 定义每个工具的必需参数和可选参数
-        tool_params = {
-            "query_assets_by_status_mcp": {
-                "required": ["userToken", "clientToken", "searchType", "searchCondition", "assetStatus"],
-                "optional": ["pageNum", "pageSize"]
-            },
-            "allocate_asset_privileges_mcp": {
-                "required": ["userToken", "clientToken", "assignType", "assetPrivileges"],
-                "optional": []
-            },
-            "query_enterprise_members_mcp": {
-                "required": ["userToken", "clientToken"],
-                "optional": ["keyword"]
-            },
-            "generate_client_token_mcp": {
-                "required": ["grantType"],
-                "optional": []
-            },
-            "generate_user_token_mcp": {
-                "required": ["grantType"],
-                "optional": ["uid"]
-            },
-            "query_asset_products_mcp": {
-                "required": ["userToken", "clientToken", "assetId"],
-                "optional": []
-            },
-            "add_enterprise_member_mcp": {
-                "required": ["userToken", "userName", "password", "name"],
-                "optional": ["departmentId", "remark", "passwordMobile", "regionCode"]
-            },
-            "renew_asset_product_mcp": {
-                "required": ["customerId", "licenseId", "limitEndTime"],
-                "optional": ["limitStartTime"]
-            }
-        }
-        
-        if tool_name in tool_params:
-            tool_config = tool_params[tool_name]
-            required_params = tool_config["required"]
-            allowed_params = tool_config["required"] + tool_config["optional"]
-            
-            # 过滤掉不需要的参数
-            filtered_args = {}
-            for key, value in args.items():
-                if key in allowed_params:
-                    filtered_args[key] = value
-                else:
-                    logger.debug(f"过滤掉不需要的参数: {key}")
-            
-            # 更新args为过滤后的参数
-            args.clear()
-            args.update(filtered_args)
-            
-            # 检查必需参数
-            missing_params = []
-            for param in required_params:
-                if param not in args:
-                    missing_params.append(param)
-            
-            if missing_params:
-                return f"缺少必需参数: {', '.join(missing_params)}。请提供完整的参数。"
-        
-        # 特殊验证和修复
-        if tool_name == "query_assets_by_status_mcp":
-            valid_search_types = [
-                "productUri", "productName", "assetNum", "memberAccount"
-            ]
-            if ("searchType" in args and 
-                args["searchType"] not in valid_search_types):
-                return f"searchType必须是: {', '.join(valid_search_types)} 中的一个"
-            
-            # 自动修复 assetStatus 格式
-            if "assetStatus" in args:
-                if isinstance(args["assetStatus"], str):
-                    # 如果是字符串，尝试转换为列表
-                    try:
-                        args["assetStatus"] = [args["assetStatus"]]
-                        logger.info(f"自动修复 assetStatus 格式: {args['assetStatus']}")
-                    except:
-                        return "assetStatus格式错误，应为状态字符串或状态列表"
-                elif not isinstance(args["assetStatus"], list):
-                    return "assetStatus必须是列表格式"
-        
-        return None
-    
+
     def _call_mcp_tool(self, tool_name: str, args):
         """调用MCP工具的包装函数"""
         try:
-            # 如果args是字符串，尝试解析为JSON
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError:
-                    logger.warning(f"无法解析参数为JSON: {args}")
                     return f"参数格式错误: {args}"
-            
-            # 确保args是字典
+
             if not isinstance(args, dict):
-                logger.warning(
-                    f"参数类型错误，期望dict但得到{type(args)}: {args}"
-                )
                 return f"参数类型错误: {type(args)}。请使用JSON格式的参数。"
-            
-            # 验证特定工具的必需参数
-            validation_error = self._validate_tool_parameters(tool_name, args)
-            if validation_error:
-                logger.warning(f"参数验证失败: {validation_error}")
-                return f"参数验证失败: {validation_error}"
-            
+
             logger.info(f"调用MCP工具: {tool_name}")
-            logger.debug(f"参数: {args}")
-            
             result = self.mcp_client.call_tool(tool_name, args)
-            
+
             if result.get("success"):
                 data = result.get("data", {})
-                # 返回更简洁的结果，避免过长的JSON字符串
-                if isinstance(data, dict):
-                    # 对于复杂的数据结构，返回摘要信息
-                    if len(str(data)) > 1000:
-                        summary = {
-                            "status": "success",
-                            "tool": tool_name,
-                            "message": "操作成功完成"
-                        }
-                        # 保留关键信息
-                        if "message" in data:
-                            summary["result"] = data["message"]
-                        elif "access_token" in data:
-                            summary["result"] = "令牌获取成功"
-                        return json.dumps(summary, ensure_ascii=False)
-                    else:
-                        return json.dumps(data, ensure_ascii=False)
-                else:
-                    return str(data)
+                return json.dumps(data, ensure_ascii=False)
             else:
-                error_msg = result.get("error", "未知错误")
-                logger.error(f"MCP工具调用失败: {error_msg}")
-                return f"工具调用失败: {error_msg}"
-                
+                return f"工具调用失败: {result.get('error', '未知错误')}"
+
         except Exception as e:
             logger.error(f"调用MCP工具异常: {str(e)}")
             return f"工具调用异常: {str(e)}"
-    
-    def reload_tools(self):
-        """重新加载MCP工具"""
-        try:
-            logger.info("重新加载MCP工具...")
-            self._load_mcp_tools()
-            
-            if self.agent_executor:
-                # 重新初始化Agent
-                self._initialize_agent()
-                logger.info("Agent工具已重新加载")
-            
-        except Exception as e:
-            logger.error(f"重新加载工具失败: {str(e)}")
-            raise e
-    
-    def get_available_tools(self) -> List[str]:
-        """获取可用工具列表"""
-        return [tool.name for tool in self.tools]
-    
-    def quick_invoke(self, message: str) -> str:
-        """快速调用agent.invoke的便捷方法"""
-        try:
-            result = self.process_request(message)
-            if result.get("success"):
-                return result.get("output", "处理完成")
-            else:
-                return f"处理失败: {result.get('message')}"
-        except Exception as e:
-            return f"调用失败: {str(e)}"
-    
+
+    def _create_agent_executor(self) -> AgentExecutor:
+        """每次请求动态创建新的AgentExecutor，保证并发安全"""
+        agent = create_react_agent(self.llm, self.tools, self._prompt)
+        return AgentExecutor(
+            agent=agent,
+            tools=self.tools,
+            verbose=False,
+            max_iterations=8,
+            max_execution_time=120,
+            return_intermediate_steps=True,
+            handle_parsing_errors=True,
+            early_stopping_method="force"
+        )
+
     def process_request(self, user_message: str) -> Dict[str, Any]:
-        """处理用户请求"""
+        """处理用户请求（并发安全）"""
         try:
-            logger.info(f"处理请求: {user_message[:50]}{'...' if len(user_message) > 50 else ''}")
-            
-            if not self.agent_executor:
-                logger.error("Agent执行器未初始化")
-                return {
-                    "success": False,
-                    "message": "Agent执行器未初始化",
-                    "allocation_plan": {},
-                    "current_step": "error",
-                    "mcp_tools_used": []
-                }
-            
-            # 使用ReAct Agent处理请求
-            try:
-                result = self.agent_executor.invoke({
-                    "input": user_message
-                })
-                
-                # 提取结果
-                output = result.get("output", "")
-                intermediate_steps = result.get("intermediate_steps", [])
-                
-                # 分析中间步骤，提取使用的工具
-                tools_used = []
-                for step in intermediate_steps:
-                    if len(step) >= 2:
-                        action = step[0]
-                        if hasattr(action, 'tool'):
-                            tools_used.append(action.tool)
-                
-                logger.info(f"ReAct Agent处理完成，使用了 {len(tools_used)} 个工具")
-                
-                return {
-                    "success": True,
-                    "message": "请求处理完成",
-                    "output": output,
-                    "intermediate_steps": intermediate_steps,
-                    "tools_used": tools_used,
-                    "allocation_plan": self._extract_allocation_info(output),
-                    "current_step": "completed"
-                }
-                
-            except Exception as agent_error:
-                logger.error(f"Agent执行失败: {str(agent_error)}")
-                return {
-                    "success": False,
-                    "message": f"Agent执行失败: {str(agent_error)}",
-                    "allocation_plan": {},
-                    "current_step": "error",
-                    "mcp_tools_used": []
-                }
-            
+            logger.info(f"处理请求: {user_message[:50]}...")
+
+            agent_executor = self._create_agent_executor()
+            result = agent_executor.invoke({"input": user_message})
+
+            output = result.get("output", "")
+            intermediate_steps = result.get("intermediate_steps", [])
+            tools_used = [step[0].tool for step in intermediate_steps if len(step) >= 2]
+
+            return {
+                "success": True,
+                "message": "请求处理完成",
+                "output": output,
+                "tools_used": tools_used,
+                "allocation_plan": self._extract_allocation_info(output),
+                "current_step": "completed"
+            }
+
         except Exception as e:
             logger.error(f"处理请求失败: {str(e)}")
             return {
@@ -422,25 +219,24 @@ class AssetManageAgent:
                 "current_step": "error",
                 "mcp_tools_used": []
             }
-    
+
     def _extract_allocation_info(self, output: str) -> Dict[str, Any]:
         """从输出中提取分配信息"""
-        try:
-            # 尝试从输出中提取结构化的分配信息
-            # 这里可以根据实际输出格式进行调整
-            allocation_plan = {
-                "summary": output,
-                "timestamp": datetime.now().isoformat(),
-                "status": "completed" if "成功" in output or "完成" in output else "failed"
-            }
-            
-            return allocation_plan
-            
-        except Exception as e:
-            logger.debug(f"提取分配信息失败: {str(e)}")
-            return {"summary": output}
+        return {
+            "summary": output,
+            "timestamp": datetime.now().isoformat(),
+            "status": "completed" if "成功" in output or "完成" in output else "failed"
+        }
 
-# HTTP 服务相关导入
+    def get_available_tools(self) -> List[str]:
+        return [tool.name for tool in self.tools]
+
+    def reload_tools(self):
+        logger.info("重新加载MCP工具...")
+        self._load_mcp_tools()
+
+
+# ---------------- HTTP 服务部分 ----------------
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse
@@ -450,217 +246,50 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-# 请求模型
+
 class ProcessRequestModel(BaseModel):
-    """处理请求的数据模型"""
     message: str
     mcp_server_url: str = None
 
-class AgentStatusModel(BaseModel):
-    """Agent状态模型"""
-    pass
 
-# 全局Agent实例
-_global_agent = None
+_global_agent: Optional[AssetManageAgent] = None
+
 
 def get_agent(mcp_server_url: str = None) -> AssetManageAgent:
-    """获取或创建Agent实例"""
     global _global_agent
     if _global_agent is None:
         _global_agent = AssetManageAgent(mcp_server_url)
     return _global_agent
 
+
 def create_app() -> FastAPI:
-    """创建FastAPI应用"""
-    app = FastAPI(
-        title="智能资产管理Agent API",
-        description="基于ReAct Agent和MCP的智能资产管理Agent HTTP服务",
-        version="1.0.0"
-    )
-    
-    @app.get("/")
-    async def root():
-        """根路径"""
-        return {
-            "message": "智能资产管理Agent HTTP服务",
-            "version": "1.0.0",
-            "status": "running",
-            "agent_type": "ReAct Agent"
-        }
-    
-    @app.get("/health")
-    async def health_check():
-        """健康检查"""
-        try:
-            agent = get_agent()
-            # 简单检查MCP客户端是否可用
-            tools_result = agent.mcp_client.get_tools()
-            mcp_status = "connected" if tools_result.get("success") else "disconnected"
-            
-            return {
-                "status": "healthy",
-                "mcp_status": mcp_status,
-                "tools_count": len(tools_result.get("data", [])) if tools_result.get("success") else 0,
-                "agent_type": "ReAct Agent"
-            }
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "status": "unhealthy",
-                    "error": str(e)
-                }
-            )
-    
+    app = FastAPI(title="智能资产管理Agent API", version="1.0.0")
+
     @app.post("/process")
     async def process_request(request: ProcessRequestModel):
-        """处理用户请求"""
         try:
             agent = get_agent(request.mcp_server_url)
-            result = agent.process_request(request.message)
-            
-            return {
-                "success": True,
-                "data": result,
-                "message": "请求处理完成"
-            }
+            return {"success": True, "data": agent.process_request(request.message)}
         except Exception as e:
-            logger.error(f"处理请求失败: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "success": False,
-                    "error": str(e),
-                    "message": "请求处理失败"
-                }
-            )
-    
+            raise HTTPException(status_code=500, detail={"error": str(e)})
+
     @app.get("/tools")
     async def get_available_tools():
-        """获取可用工具列表"""
         try:
             agent = get_agent()
-            tools_result = agent.mcp_client.get_tools()
-            
-            return {
-                "success": True,
-                "data": tools_result.get("data", []),
-                "count": len(tools_result.get("data", [])),
-                "message": "获取工具列表成功"
-            }
+            return {"success": True, "data": agent.get_available_tools()}
         except Exception as e:
-            logger.error(f"获取工具列表失败: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "success": False,
-                    "error": str(e),
-                    "message": "获取工具列表失败"
-                }
-            )
-    
-    @app.post("/reload-tools")
-    async def reload_tools():
-        """重新加载MCP工具"""
-        try:
-            agent = get_agent()
-            agent.reload_tools()
-            
-            return {
-                "success": True,
-                "message": "工具重新加载成功",
-                "tools_count": len(agent.get_available_tools())
-            }
-        except Exception as e:
-            logger.error(f"重新加载工具失败: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "success": False,
-                    "error": str(e),
-                    "message": "重新加载工具失败"
-                }
-            )
-    
-    @app.get("/status")
-    async def get_agent_status():
-        """获取Agent状态"""
-        try:
-            agent = get_agent()
-            
-            # 获取MCP工具状态
-            tools_result = agent.mcp_client.get_tools()
-            
-            return {
-                "agent_initialized": agent is not None,
-                "agent_type": "ReAct Agent",
-                "mcp_server_url": agent.mcp_client.server_url if agent else None,
-                "mcp_connected": tools_result.get("success", False),
-                "available_tools": len(tools_result.get("data", [])),
-                "llm_model": getattr(agent.llm, 'model_name', 'unknown') if agent else None,
-                "tools_list": agent.get_available_tools() if agent else []
-            }
-        except Exception as e:
-            logger.error(f"获取Agent状态失败: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "success": False,
-                    "error": str(e),
-                    "message": "获取Agent状态失败"
-                }
-            )
-    
+            raise HTTPException(status_code=500, detail={"error": str(e)})
+
     return app
 
-def run_http_server(host: str = "0.0.0.0", port: int = 8001):
-    """运行HTTP服务器"""
-    if not FASTAPI_AVAILABLE:
-        logger.error("FastAPI未安装，无法启动HTTP服务。请运行: pip install fastapi uvicorn")
-        return
-    
-    print("🚀 智能资产管理Agent HTTP服务 (ReAct Agent)")
-    print("=" * 50)
-    print(f"服务地址: http://{host}:{port}")
-    print(f"API文档: http://{host}:{port}/docs")
-    print("=" * 50)
-    
-    app = create_app()
-    
-    # 启动服务器
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level="info"
-    )
 
-def main():
-    """主函数 - 只支持HTTP服务器模式"""
-    # 设置日志
-    try:
-        from ..utils import setup_logging
-        setup_logging(level="INFO")
-    except ImportError:
-        try:
-            from utils import setup_logging
-            setup_logging(level="INFO")
-        except ImportError:
-            logging.basicConfig(
-                level=logging.INFO,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-    
-    # 只支持HTTP服务器模式
-    host = os.getenv("AGENT_SERVER_HOST", "0.0.0.0")
-    port = int(os.getenv("AGENT_SERVER_PORT", "8001"))
-    
-    print("🚀 智能资产管理Agent (ReAct模式)")
-    print("=" * 40)
-    print(f"启动服务: {host}:{port}")
-    print("=" * 40)
-    
-    run_http_server(host, port)
+def run_http_server(host="0.0.0.0", port=8001):
+    if not FASTAPI_AVAILABLE:
+        logger.error("FastAPI未安装，无法启动HTTP服务")
+        return
+    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+
 
 if __name__ == "__main__":
-    main() 
+    run_http_server()
