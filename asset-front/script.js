@@ -1,137 +1,159 @@
-// 全局配置
+// 配置信息
 const CONFIG = {
     AGENT_API_BASE: 'http://localhost:8001',
-    RECONNECT_INTERVAL: 5000,
-    MAX_RECONNECT_ATTEMPTS: 3,
-    // 内置令牌
     DEFAULT_USER_TOKEN: 'cn-8cb357d5-93f6-4a4f-80df-482271c87ee8',
-    DEFAULT_CLIENT_TOKEN: 'cn-1e522f6f-ff6e-4384-be68-e35c302c786c'
+    DEFAULT_CLIENT_TOKEN: 'cn-1e522f6f-ff6e-4384-be68-e35c302c786c',
+    REQUEST_TIMEOUT: 5 * 60 * 1000 // 5分钟
 };
 
 // 全局状态
-let reconnectAttempts = 0;
-let isConnected = false;
+let thinkingModeEnabled = false;
+let progressTimer = null;
 
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', function() {
     initializeApp();
+    setupEventListeners();
     updateTokenDisplay();
+    checkAgentStatus();
 });
 
 // 初始化应用
-async function initializeApp() {
-    updateStatus('connecting', '连接中...');
+function initializeApp() {
+    console.log('智能资产管理助手已启动');
     
-    try {
-        // 检查Agent状态
-        await checkAgentStatus();
-        
-        // 移除工具加载功能
-        
-        updateStatus('connected', '已连接');
-        isConnected = true;
-        reconnectAttempts = 0;
-        
-    } catch (error) {
-        console.error('初始化失败:', error);
-        updateStatus('error', '连接失败');
-        
-        // 尝试重连
-        if (reconnectAttempts < CONFIG.MAX_RECONNECT_ATTEMPTS) {
-            setTimeout(() => {
-                reconnectAttempts++;
-                initializeApp();
-            }, CONFIG.RECONNECT_INTERVAL);
-        }
-    }
-    
-    // 绑定事件监听器
-    bindEventListeners();
-}
-
-// 绑定事件监听器
-function bindEventListeners() {
-    // 回车发送消息
+    // 设置输入框自动调整高度
     const messageInput = document.getElementById('messageInput');
-    messageInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
-    
-    // 令牌类型切换
-    const tokenType = document.getElementById('tokenType');
-    if (tokenType) {
-        tokenType.addEventListener('change', function() {
-            const uidGroup = document.getElementById('uidGroup');
-            if (this.value === 'user') {
-                uidGroup.style.display = 'block';
-            } else {
-                uidGroup.style.display = 'none';
-            }
-        });
+    if (messageInput) {
+        messageInput.addEventListener('input', autoResizeTextarea);
+        messageInput.addEventListener('keydown', handleKeyDown);
     }
     
-    // 点击模态框外部关闭
-    document.addEventListener('click', function(e) {
-        if (e.target.classList.contains('modal')) {
-            closeModal(e.target.id);
-        }
-    });
+    // 设置字符计数
+    updateCharCount();
 }
 
-// 更新连接状态
-function updateStatus(status, text) {
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
+// 设置事件监听器
+function setupEventListeners() {
+    const messageInput = document.getElementById('messageInput');
+    if (messageInput) {
+        messageInput.addEventListener('input', updateCharCount);
+    }
+}
+
+// 自动调整文本框高度
+function autoResizeTextarea() {
+    const textarea = document.getElementById('messageInput');
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+}
+
+// 处理键盘事件
+function handleKeyDown(event) {
+    if (event.ctrlKey && event.key === 'Enter') {
+        event.preventDefault();
+        sendMessage();
+    }
+}
+
+// 更新字符计数
+function updateCharCount() {
+    const messageInput = document.getElementById('messageInput');
+    const charCount = document.getElementById('charCount');
+    if (messageInput && charCount) {
+        charCount.textContent = messageInput.value.length;
+        
+        // 根据字符数量改变颜色
+        if (messageInput.value.length > 800) {
+            charCount.style.color = '#f56565';
+        } else if (messageInput.value.length > 600) {
+            charCount.style.color = '#ed8936';
+        } else {
+            charCount.style.color = 'rgba(255, 255, 255, 0.6)';
+        }
+    }
+}
+
+// 更新令牌显示
+function updateTokenDisplay() {
+    const userTokenDisplay = document.getElementById('userTokenDisplay');
+    const clientTokenDisplay = document.getElementById('clientTokenDisplay');
     
-    statusDot.className = `status-dot ${status}`;
-    statusText.textContent = text;
+    if (userTokenDisplay) {
+        userTokenDisplay.textContent = maskToken(CONFIG.DEFAULT_USER_TOKEN);
+    }
+    if (clientTokenDisplay) {
+        clientTokenDisplay.textContent = maskToken(CONFIG.DEFAULT_CLIENT_TOKEN);
+    }
+}
+
+// 遮罩令牌显示
+function maskToken(token) {
+    if (!token || token.length < 10) return token;
+    return token.substring(0, 8) + '...' + token.substring(token.length - 4);
 }
 
 // 检查Agent状态
 async function checkAgentStatus() {
     try {
         const response = await fetch(`${CONFIG.AGENT_API_BASE}/status`);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        
-        const data = await response.json();
-        if (data.success) {
-            console.log('Agent状态:', data.data);
-            return true;
+        if (response.ok) {
+            showToast('系统已连接', 'success');
         } else {
-            throw new Error('Agent响应异常');
+            showToast('系统连接异常', 'error');
         }
     } catch (error) {
-        // 如果/status端点不可用，回退到/tools端点
-        try {
-            const fallbackResponse = await fetch(`${CONFIG.AGENT_API_BASE}/tools`);
-            if (fallbackResponse.ok) {
-                const fallbackData = await fallbackResponse.json();
-                return fallbackData.success;
-            }
-        } catch (fallbackError) {
-            console.error('状态检查失败:', error, fallbackError);
-        }
-        throw error;
+        console.error('状态检查失败:', error);
+        showToast('无法连接到服务器', 'error');
     }
 }
 
-// 更新令牌显示
-function updateTokenDisplay() {
-    const tokenInfo = document.querySelector('.token-info span');
-    if (tokenInfo) {
-        // 显示令牌的前8位和后4位，中间用...代替
-        const userToken = CONFIG.DEFAULT_USER_TOKEN;
-        const clientToken = CONFIG.DEFAULT_CLIENT_TOKEN;
-        const maskedUserToken = userToken.substring(0, 8) + '...' + userToken.substring(userToken.length - 4);
-        const maskedClientToken = clientToken.substring(0, 8) + '...' + clientToken.substring(clientToken.length - 4);
-        
-        tokenInfo.innerHTML = `用户令牌: ${maskedUserToken}<br>客户令牌: ${maskedClientToken}`;
-        tokenInfo.title = '令牌已自动配置，将在每次请求中使用';
+// 切换思考模式
+function toggleThinkingMode() {
+    thinkingModeEnabled = !thinkingModeEnabled;
+    const btn = document.getElementById('thinkingModeBtn');
+    
+    if (btn) {
+        if (thinkingModeEnabled) {
+            btn.classList.add('active');
+            btn.innerHTML = '<i class="fas fa-brain"></i><span>思考模式 (开启)</span>';
+            showToast('思考模式已开启，将显示详细处理过程', 'info');
+        } else {
+            btn.classList.remove('active');
+            btn.innerHTML = '<i class="fas fa-brain"></i><span>思考模式</span>';
+            showToast('思考模式已关闭', 'info');
+        }
+    }
+}
+
+// 切换侧边栏
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+        sidebar.classList.toggle('open');
+    }
+}
+
+// 快速操作
+function quickAction(type) {
+    const suggestions = {
+        'query': '查询我的资产分配情况',
+        'allocate': '为张三分配一个广联达云锁资产',
+        'member': '添加一个新的企业成员'
+    };
+    
+    if (suggestions[type]) {
+        sendSuggestion(suggestions[type]);
+    }
+}
+
+// 发送建议消息
+function sendSuggestion(text) {
+    const messageInput = document.getElementById('messageInput');
+    if (messageInput) {
+        messageInput.value = text;
+        autoResizeTextarea();
+        sendMessage();
     }
 }
 
@@ -142,25 +164,135 @@ async function sendMessage() {
     
     if (!message) return;
     
+    // 清除欢迎消息
+    clearWelcomeMessage();
+    
     // 添加用户消息到聊天区域
     addMessage('user', message);
     
     // 清空输入框
     messageInput.value = '';
+    messageInput.style.height = 'auto';
+    updateCharCount();
     
     // 禁用发送按钮
     const sendBtn = document.querySelector('.send-btn');
     sendBtn.disabled = true;
-    sendBtn.innerHTML = '<div class="spinner"></div> 处理中...';
+    sendBtn.innerHTML = '<div class="spinner"></div>';
     
-    // 显示打字动画
-    showTypingIndicator();
+    // 显示加载指示器
+    showLoadingOverlay();
+    
+    // 创建AbortController用于超时控制
+    const controller = new AbortController();
     
     try {
-        // 构建包含令牌信息的完整消息
-        const fullMessage = `userToken:${CONFIG.DEFAULT_USER_TOKEN},clientToken:${CONFIG.DEFAULT_CLIENT_TOKEN}，${message}`;
+        // 设置超时定时器
+        const timeoutId = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
         
-        // 发送请求到Agent
+        // 设置进度提示
+        progressTimer = setTimeout(() => {
+            showToast('处理中，请稍候...', 'info');
+        }, 30000);
+        
+        setTimeout(() => {
+            if (progressTimer) {
+                showToast('正在深度分析，请耐心等待...', 'info');
+            }
+        }, 120000);
+        
+        // 构建完整消息（包含令牌）
+        const fullMessage = `userToken:${CONFIG.DEFAULT_USER_TOKEN},clientToken:${CONFIG.DEFAULT_CLIENT_TOKEN},${message}`;
+        
+        // 根据思考模式选择不同的处理方式
+        if (thinkingModeEnabled) {
+            await handleStreamingRequest(fullMessage, controller);
+        } else {
+            await handleNormalRequest(fullMessage, controller);
+        }
+        
+        // 清除超时定时器
+        clearTimeout(timeoutId);
+        
+    } catch (error) {
+        console.error('发送消息失败:', error);
+        
+        if (error.name === 'AbortError') {
+            addMessage('assistant', '请求处理时间过长（超过5分钟），已自动取消。请尝试简化您的请求或稍后重试。');
+            showToast('请求超时', 'error');
+        } else {
+            addMessage('assistant', '抱歉，处理您的请求时出现了问题。请稍后重试。');
+            showToast('请求失败', 'error');
+        }
+    } finally {
+        // 恢复发送按钮
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i>';
+        
+        // 隐藏加载指示器
+        hideLoadingOverlay();
+        
+        // 清除进度定时器
+        if (progressTimer) {
+            clearTimeout(progressTimer);
+            progressTimer = null;
+        }
+    }
+}
+
+// 处理流式请求
+async function handleStreamingRequest(fullMessage, controller) {
+    try {
+        const response = await fetch(`${CONFIG.AGENT_API_BASE}/process-stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message: fullMessage
+            }),
+            signal: controller.signal
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        // 创建助手消息容器
+        const assistantMessage = createStreamingMessage();
+        
+        // 处理流式响应
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        await handleStreamingData(data, assistantMessage);
+                    } catch (e) {
+                        console.warn('解析流式数据失败:', e);
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('流式请求失败:', error);
+        throw error;
+    }
+}
+
+// 处理普通请求
+async function handleNormalRequest(fullMessage, controller) {
+    try {
         const response = await fetch(`${CONFIG.AGENT_API_BASE}/process`, {
             method: 'POST',
             headers: {
@@ -168,457 +300,256 @@ async function sendMessage() {
             },
             body: JSON.stringify({
                 message: fullMessage
-            })
+            }),
+            signal: controller.signal
         });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
         
         const data = await response.json();
         
-        // 移除打字动画
-        hideTypingIndicator();
-        
-        if (data.success && data.data) {
-            // 添加Assistant回复，包含思考步骤
-            addMessageWithThinking('assistant', data.data.output || '处理完成', data.data.thinking_steps || []);
-            
-            // 移除操作记录功能
+        if (data.success) {
+            addMessage('assistant', data.output || '处理完成');
         } else {
-            addMessage('assistant', '抱歉，处理您的请求时出现了问题。请稍后重试。');
+            addMessage('assistant', data.message || '处理失败，请重试');
         }
         
     } catch (error) {
-        console.error('发送消息失败:', error);
-        // 移除打字动画
-        hideTypingIndicator();
-        addMessage('assistant', '网络连接异常，请检查网络后重试。');
-        showToast('网络连接异常', 'error');
-    } finally {
-        // 恢复发送按钮
-        sendBtn.disabled = false;
-        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> 发送';
+        console.error('普通请求失败:', error);
+        throw error;
     }
 }
 
-// 显示打字动画
-function showTypingIndicator() {
+// 创建流式消息容器
+function createStreamingMessage() {
     const chatMessages = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant streaming';
     
-    // 移除已存在的打字动画
-    const existingTyping = chatMessages.querySelector('.typing-indicator');
-    if (existingTyping) {
-        existingTyping.remove();
-    }
-    
-    const typingDiv = document.createElement('div');
-    typingDiv.className = 'typing-indicator';
-    typingDiv.id = 'typingIndicator';
-    
-    typingDiv.innerHTML = `
+    messageDiv.innerHTML = `
         <div class="message-avatar">
             <i class="fas fa-robot"></i>
         </div>
-        <div class="typing-content">
-            <span class="typing-text">正在思考</span>
-            <div class="typing-dots">
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-            </div>
-        </div>
-    `;
-    
-    chatMessages.appendChild(typingDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// 隐藏打字动画
-function hideTypingIndicator() {
-    const typingIndicator = document.getElementById('typingIndicator');
-    if (typingIndicator) {
-        typingIndicator.remove();
-    }
-}
-
-// 添加消息到聊天区域
-function addMessage(type, content) {
-    const chatMessages = document.getElementById('chatMessages');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${type}`;
-    
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('zh-CN', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-    });
-    
-    messageDiv.innerHTML = `
-        <div class="message-avatar">
-            <i class="fas fa-${type === 'user' ? 'user' : 'robot'}"></i>
-        </div>
-        <div class="message-content">
-            <div class="message-text">${formatMessage(content)}</div>
-            <div class="message-time">${timeStr}</div>
-        </div>
-    `;
-    
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// 添加带思考步骤的消息
-function addMessageWithThinking(type, content, thinkingSteps) {
-    const chatMessages = document.getElementById('chatMessages');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${type}`;
-    
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('zh-CN', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-    });
-    
-    const thinkingStepsHtml = thinkingSteps && thinkingSteps.length > 0 
-        ? generateThinkingStepsHtml(thinkingSteps) 
-        : '';
-    
-    messageDiv.innerHTML = `
-        <div class="message-avatar">
-            <i class="fas fa-${type === 'user' ? 'user' : 'robot'}"></i>
-        </div>
         <div class="message-content">
             <div class="message-text">
-                ${formatMessage(content)}
-                ${thinkingStepsHtml}
+                <div class="streaming-status">
+                    <i class="fas fa-cog fa-spin"></i>
+                    <span>正在思考中...</span>
+                </div>
+                <div class="streaming-steps"></div>
+                <div class="streaming-result" style="display: none;"></div>
             </div>
-            <div class="message-time">${timeStr}</div>
+            <div class="message-time">${new Date().toLocaleTimeString()}</div>
         </div>
     `;
     
     chatMessages.appendChild(messageDiv);
+    scrollToBottom();
     
-    // 绑定思考步骤切换事件
-    const toggleBtn = messageDiv.querySelector('.thinking-toggle');
-    if (toggleBtn) {
-        toggleBtn.addEventListener('click', function() {
-            const stepsContainer = messageDiv.querySelector('.thinking-steps');
-            const isCollapsed = stepsContainer.classList.contains('collapsed');
-            
-            if (isCollapsed) {
-                stepsContainer.classList.remove('collapsed');
-                toggleBtn.classList.remove('collapsed');
-                toggleBtn.innerHTML = '<i class="fas fa-chevron-down toggle-icon"></i> 隐藏思考过程';
-            } else {
-                stepsContainer.classList.add('collapsed');
-                toggleBtn.classList.add('collapsed');
-                toggleBtn.innerHTML = '<i class="fas fa-chevron-right toggle-icon"></i> 查看思考过程';
-            }
-        });
-    }
-    
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return messageDiv;
 }
 
-// 生成思考步骤HTML
-function generateThinkingStepsHtml(steps) {
-    if (!steps || steps.length === 0) return '';
+// 处理流式数据
+async function handleStreamingData(data, messageElement) {
+    const streamingStatus = messageElement.querySelector('.streaming-status');
+    const streamingSteps = messageElement.querySelector('.streaming-steps');
+    const streamingResult = messageElement.querySelector('.streaming-result');
     
-    const stepsHtml = steps.map(step => {
-        const icon = getStepIcon(step.type);
-        const title = getStepTitle(step.type);
-        const timestamp = new Date(step.timestamp).toLocaleTimeString('zh-CN', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-        });
+    if (data.type === 'step') {
+        // 更新状态
+        if (streamingStatus) {
+            streamingStatus.innerHTML = `
+                <i class="fas fa-cog fa-spin"></i>
+                <span>${data.content || '处理中...'}</span>
+            `;
+        }
         
-        let detailsHtml = '';
-        if (step.tool_name) {
-            detailsHtml = `
-                <div class="step-details">
-                    <strong>工具:</strong> ${step.tool_name}<br>
-                    <strong>参数:</strong> ${JSON.stringify(step.tool_input, null, 2)}
+        // 添加步骤
+        if (streamingSteps && data.step) {
+            const stepElement = createStreamingStep(data.step);
+            streamingSteps.appendChild(stepElement);
+            scrollToBottom();
+        }
+        
+    } else if (data.type === 'result') {
+        // 隐藏状态指示器
+        if (streamingStatus) {
+            streamingStatus.style.display = 'none';
+        }
+        
+        // 显示最终结果
+        if (streamingResult) {
+            streamingResult.style.display = 'block';
+            streamingResult.innerHTML = `
+                <div class="final-result">
+                    <div class="result-header">
+                        <i class="fas fa-check-circle"></i>
+                        <span>处理完成</span>
+                    </div>
+                    <div class="result-content">${data.content || '操作已完成'}</div>
                 </div>
             `;
         }
         
-        return `
-            <div class="thinking-step ${step.type}">
-                <div class="step-icon">
-                    <i class="fas ${icon}"></i>
-                </div>
-                <div class="step-content">
-                    <div class="step-title">${title}</div>
-                    <div class="step-text">${formatMessage(step.content)}</div>
-                    ${detailsHtml}
-                    <div class="step-timestamp">${timestamp}</div>
-                </div>
-            </div>
-        `;
-    }).join('');
+        scrollToBottom();
+    }
+}
+
+// 创建流式步骤元素
+function createStreamingStep(stepData) {
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'streaming-step';
     
-    return `
-        <div class="thinking-toggle collapsed">
-            <i class="fas fa-chevron-right toggle-icon"></i>
-            查看思考过程 (${steps.length}步)
-        </div>
-        <div class="thinking-steps collapsed">
-            ${stepsHtml}
+    const resultClass = stepData.result_type === 'success' ? 'success' : 
+                       stepData.result_type === 'error' ? 'error' : '';
+    
+    stepDiv.innerHTML = `
+        <div class="step-number">${stepData.step || 1}</div>
+        <div class="step-content">
+            <div class="step-header">
+                <div class="step-type">${stepData.type || 'thinking'}</div>
+                <div class="step-progress">${stepData.progress || ''}</div>
+            </div>
+            <div class="step-text">${stepData.content || '处理中...'}</div>
+            <div class="step-result ${resultClass}">${stepData.result || ''}</div>
         </div>
     `;
-}
-
-// 获取步骤图标
-function getStepIcon(type) {
-    switch (type) {
-        case 'thinking': return 'fa-brain';
-        case 'action': return 'fa-cog';
-        case 'observation': return 'fa-eye';
-        default: return 'fa-circle';
-    }
-}
-
-// 获取步骤标题
-function getStepTitle(type) {
-    switch (type) {
-        case 'thinking': return '思考';
-        case 'action': return '执行';
-        case 'observation': return '观察';
-        default: return '步骤';
-    }
-}
-
-// 格式化消息内容
-function formatMessage(content) {
-    // 处理换行
-    content = content.replace(/\n/g, '<br>');
     
-    // 处理JSON格式的内容
-    try {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            const jsonStr = jsonMatch[0];
-            const jsonObj = JSON.parse(jsonStr);
-            const formattedJson = JSON.stringify(jsonObj, null, 2);
-            content = content.replace(jsonStr, `<pre><code>${formattedJson}</code></pre>`);
-        }
-    } catch (e) {
-        // 不是JSON格式，保持原样
-    }
-    
-    return content;
+    return stepDiv;
 }
 
-// 清空聊天记录
+// 清除欢迎消息
+function clearWelcomeMessage() {
+    const welcomeMessage = document.querySelector('.welcome-message');
+    if (welcomeMessage) {
+        welcomeMessage.style.display = 'none';
+    }
+}
+
+// 添加消息到聊天区域
+function addMessage(sender, content) {
+    const chatMessages = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}`;
+    
+    const avatarIcon = sender === 'user' ? 'fas fa-user' : 'fas fa-robot';
+    const time = new Date().toLocaleTimeString();
+    
+    messageDiv.innerHTML = `
+        <div class="message-avatar">
+            <i class="${avatarIcon}"></i>
+        </div>
+        <div class="message-content">
+            <div class="message-text">${content}</div>
+            <div class="message-time">${time}</div>
+        </div>
+    `;
+    
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+// 清空对话
 function clearChat() {
     const chatMessages = document.getElementById('chatMessages');
-    chatMessages.innerHTML = `
-        <div class="message assistant">
-            <div class="message-avatar">
-                <i class="fas fa-robot"></i>
-            </div>
-            <div class="message-content">
-                <div class="message-text">
-                    您好！我是智能资产管理助手。我可以帮您：<br>
-                    • 查询和管理企业资产<br>
-                    • 添加和管理企业成员<br>
-                    • 分配资产权限<br>
-                    • 生成访问令牌<br><br>
-                    请告诉我您需要什么帮助？
-                </div>
-                <div class="message-time">刚刚</div>
-            </div>
-        </div>
-    `;
+    if (chatMessages) {
+        // 清除所有消息，但保留欢迎消息
+        const messages = chatMessages.querySelectorAll('.message');
+        messages.forEach(message => message.remove());
+        
+        // 显示欢迎消息
+        const welcomeMessage = chatMessages.querySelector('.welcome-message');
+        if (welcomeMessage) {
+            welcomeMessage.style.display = 'flex';
+        }
+    }
+    
+    showToast('对话已清空', 'info');
 }
 
-// 移除操作记录功能
+// 滚动到底部
+function scrollToBottom() {
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
 
-// 显示提示消息
-function showToast(message, type = 'success') {
+// 显示加载覆盖层
+function showLoadingOverlay() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.classList.add('show');
+    }
+}
+
+// 隐藏加载覆盖层
+function hideLoadingOverlay() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.classList.remove('show');
+    }
+}
+
+// 显示Toast通知
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
     
-    document.body.appendChild(toast);
+    container.appendChild(toast);
     
+    // 3秒后自动移除
     setTimeout(() => {
-        toast.remove();
-    }, 3000);
-}
-
-// 模态框相关函数
-function showModal(modalId) {
-    const modal = document.getElementById(modalId);
-    modal.classList.add('show');
-}
-
-function closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    modal.classList.remove('show');
-}
-
-// 快速操作函数
-function showTokenDialog() {
-    showModal('tokenModal');
-}
-
-function showMemberDialog() {
-    showModal('memberModal');
-}
-
-function showAssetDialog() {
-    showModal('assetModal');
-}
-
-function showAllocationDialog() {
-    showModal('allocationModal');
-}
-
-// 生成令牌
-async function generateToken() {
-    const tokenType = document.getElementById('tokenType').value;
-    const userUid = document.getElementById('userUid').value;
-    
-    let message = '';
-    if (tokenType === 'client') {
-        message = '请生成客户端令牌';
-    } else {
-        if (!userUid.trim()) {
-            showToast('请输入用户ID', 'error');
-            return;
+        if (toast.parentNode) {
+            toast.parentNode.removeChild(toast);
         }
-        message = `请为用户ID ${userUid} 生成用户令牌`;
-    }
-    
-    closeModal('tokenModal');
-    
-    // 添加到聊天并发送
-    document.getElementById('messageInput').value = message;
-    sendMessage();
-}
-
-// 添加成员
-async function addMember() {
-    const userToken = document.getElementById('memberUserToken').value;
-    const userName = document.getElementById('memberUserName').value;
-    const password = document.getElementById('memberPassword').value;
-    const name = document.getElementById('memberName').value;
-    const phone = document.getElementById('memberPhone').value;
-    
-    if (!userToken.trim() || !userName.trim() || !password.trim() || !name.trim()) {
-        showToast('请填写所有必填字段', 'error');
-        return;
-    }
-    
-    let message = `请添加企业成员：用户名 ${userName}，姓名 ${name}，密码 ${password}`;
-    if (phone.trim()) {
-        message += `，密保手机 ${phone}`;
-    }
-    message += `。用户令牌：${userToken}`;
-    
-    closeModal('memberModal');
-    
-    // 添加到聊天并发送
-    document.getElementById('messageInput').value = message;
-    sendMessage();
-}
-
-// 查询资产
-async function queryAssets() {
-    const userToken = document.getElementById('assetUserToken').value;
-    const clientToken = document.getElementById('assetClientToken').value;
-    const searchType = document.getElementById('assetSearchType').value;
-    const searchCondition = document.getElementById('assetSearchCondition').value;
-    
-    if (!userToken.trim() || !clientToken.trim()) {
-        showToast('请填写用户令牌和客户端令牌', 'error');
-        return;
-    }
-    
-    // 获取选中的资产状态
-    const statusCheckboxes = document.querySelectorAll('#assetModal input[type="checkbox"]:checked');
-    const statuses = Array.from(statusCheckboxes).map(cb => cb.value);
-    
-    if (statuses.length === 0) {
-        showToast('请至少选择一个资产状态', 'error');
-        return;
-    }
-    
-    let message = `请查询资产：搜索类型 ${searchType}`;
-    if (searchCondition.trim()) {
-        message += `，搜索条件 ${searchCondition}`;
-    }
-    message += `，资产状态 ${statuses.join('、')}。用户令牌：${userToken}，客户端令牌：${clientToken}`;
-    
-    closeModal('assetModal');
-    
-    // 添加到聊天并发送
-    document.getElementById('messageInput').value = message;
-    sendMessage();
-}
-
-// 分配资产
-async function allocateAsset() {
-    const userToken = document.getElementById('allocUserToken').value;
-    const clientToken = document.getElementById('allocClientToken').value;
-    const assetNum = document.getElementById('allocAssetNum').value;
-    const assetId = document.getElementById('allocAssetId').value;
-    const memberId = document.getElementById('allocMemberId').value;
-    const assignType = document.getElementById('allocAssignType').value;
-    
-    if (!userToken.trim() || !clientToken.trim() || !assetNum.trim() || !assetId.trim() || !memberId.trim()) {
-        showToast('请填写所有必填字段', 'error');
-        return;
-    }
-    
-    const action = assignType === 'assign' ? '分配' : '取消分配';
-    const message = `请${action}资产权限：资产编号 ${assetNum}，资产ID ${assetId}，成员ID ${memberId}。用户令牌：${userToken}，客户端令牌：${clientToken}`;
-    
-    closeModal('allocationModal');
-    
-    // 添加到聊天并发送
-    document.getElementById('messageInput').value = message;
-    sendMessage();
+    }, 3000);
 }
 
 // 工具函数：格式化时间
 function formatTime(date) {
-    return date.toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
+    return date.toLocaleTimeString('zh-CN', {
         hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
+        minute: '2-digit'
     });
 }
 
-// 工具函数：复制到剪贴板
-async function copyToClipboard(text) {
-    try {
-        await navigator.clipboard.writeText(text);
-        showToast('已复制到剪贴板', 'success');
-    } catch (err) {
-        console.error('复制失败:', err);
-        showToast('复制失败', 'error');
+// 工具函数：防抖
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// 响应式处理
+function handleResize() {
+    const sidebar = document.querySelector('.sidebar');
+    const isMobile = window.innerWidth <= 768;
+    
+    if (sidebar && !isMobile) {
+        sidebar.classList.remove('open');
     }
 }
 
-// 错误处理
-window.addEventListener('error', function(e) {
-    console.error('全局错误:', e.error);
-    showToast('系统出现异常，请刷新页面重试', 'error');
-});
+// 监听窗口大小变化
+window.addEventListener('resize', debounce(handleResize, 250));
 
-// 网络状态监听
-window.addEventListener('online', function() {
-    if (!isConnected) {
-        showToast('网络已恢复，正在重连...', 'success');
-        initializeApp();
-    }
-});
-
-window.addEventListener('offline', function() {
-    updateStatus('error', '网络断开');
-    isConnected = false;
-    showToast('网络连接已断开', 'error');
-}); 
+// 导出主要函数供HTML调用
+window.sendMessage = sendMessage;
+window.toggleThinkingMode = toggleThinkingMode;
+window.toggleSidebar = toggleSidebar;
+window.clearChat = clearChat;
+window.quickAction = quickAction;
+window.sendSuggestion = sendSuggestion; 

@@ -7,8 +7,8 @@
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional, TypedDict
 from datetime import datetime
+from typing import Dict, List, Any, Optional, TypedDict
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
@@ -200,12 +200,16 @@ class AssetManageAgent:
             output = result.get("output", "")
             intermediate_steps = result.get("intermediate_steps", [])
             tools_used = [step[0].tool for step in intermediate_steps if len(step) >= 2]
+            
+            # 解析简化的思考步骤
+            thinking_steps = self._parse_simple_thinking_steps(intermediate_steps)
 
             return {
                 "success": True,
                 "message": "请求处理完成",
                 "output": output,
                 "tools_used": tools_used,
+                "thinking_steps": thinking_steps,
                 "allocation_plan": self._extract_allocation_info(output),
                 "current_step": "completed"
             }
@@ -217,8 +221,301 @@ class AssetManageAgent:
                 "message": f"处理请求失败: {str(e)}",
                 "allocation_plan": {},
                 "current_step": "error",
+                "thinking_steps": [],
                 "mcp_tools_used": []
             }
+
+    def _parse_simple_thinking_steps(self, intermediate_steps) -> List[Dict[str, Any]]:
+        """解析简化的思考步骤 - 通过LLM优化展示"""
+        if not intermediate_steps:
+            return []
+        
+        # 收集原始的思考和执行信息
+        raw_steps = []
+        for step in intermediate_steps:
+            if len(step) >= 2:
+                action = step[0]
+                observation = step[1]
+                
+                thought = getattr(action, 'log', '') or str(action)
+                tool_name = getattr(action, 'tool', 'unknown')
+                
+                raw_steps.append({
+                    'thought': thought,
+                    'tool': tool_name,
+                    'observation': str(observation)
+                })
+        
+        if not raw_steps:
+            return []
+        
+        # 使用LLM总结和优化思考步骤
+        try:
+            optimized_steps = self._optimize_thinking_steps_with_llm(raw_steps)
+            return optimized_steps
+        except Exception as e:
+            logger.error(f"LLM优化思考步骤失败: {str(e)}")
+            # 如果LLM优化失败，返回空列表
+            return []
+
+    def process_request_with_streaming(self, user_message: str) -> Dict[str, Any]:
+        """处理用户请求，支持流式思考步骤（同步版本，用于线程池执行）"""
+        try:
+            logger.info(f"流式处理请求: {user_message[:50]}...")
+
+            # 检查消息是否包含必要的token信息
+            if "userToken:" not in user_message or "clientToken:" not in user_message:
+                logger.warning("请求缺少必要的token信息")
+                return {
+                    "success": False,
+                    "message": "请求缺少必要的认证信息",
+                    "output": "请确保包含用户令牌和客户端令牌信息",
+                    "allocation_plan": {},
+                    "current_step": "error",
+                    "thinking_steps": [],
+                    "tools_used": []
+                }
+
+            agent_executor = self._create_agent_executor()
+            result = agent_executor.invoke({"input": user_message})
+
+            output = result.get("output", "")
+            intermediate_steps = result.get("intermediate_steps", [])
+            tools_used = [step[0].tool for step in intermediate_steps if len(step) >= 2]
+            
+            # 解析简化的思考步骤（用于流式传输）
+            thinking_steps = self._parse_streaming_thinking_steps(intermediate_steps)
+
+            logger.info(f"流式请求处理完成，使用了 {len(tools_used)} 个工具，{len(thinking_steps)} 个思考步骤")
+
+            return {
+                "success": True,
+                "message": "请求处理完成",
+                "output": output,
+                "tools_used": tools_used,
+                "thinking_steps": thinking_steps,
+                "allocation_plan": self._extract_allocation_info(output),
+                "current_step": "completed"
+            }
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            logger.error(f"流式处理请求失败: {str(e)}")
+            logger.error(f"错误详情: {error_details}")
+            
+            return {
+                "success": False,
+                "message": f"处理请求失败: {str(e)}",
+                "output": "系统处理请求时发生错误，请稍后重试",
+                "allocation_plan": {},
+                "current_step": "error",
+                "thinking_steps": [],
+                "tools_used": []
+            }
+
+    def _parse_streaming_thinking_steps(self, intermediate_steps) -> List[Dict[str, Any]]:
+        """解析用于流式传输的思考步骤"""
+        if not intermediate_steps:
+            return []
+        
+        # 收集原始的思考和执行信息
+        raw_steps = []
+        for step in intermediate_steps:
+            if len(step) >= 2:
+                action = step[0]
+                observation = step[1]
+                
+                thought = getattr(action, 'log', '') or str(action)
+                tool_name = getattr(action, 'tool', 'unknown')
+                
+                raw_steps.append({
+                    'thought': thought,
+                    'tool': tool_name,
+                    'observation': str(observation)
+                })
+        
+        if not raw_steps:
+            return []
+        
+        # 使用LLM优化思考步骤（适合流式传输）
+        try:
+            optimized_steps = self._optimize_streaming_thinking_steps_with_llm(raw_steps)
+            return optimized_steps
+        except Exception as e:
+            logger.error(f"LLM优化流式思考步骤失败: {str(e)}")
+            # 如果LLM优化失败，返回空列表
+            return []
+
+    def _optimize_streaming_thinking_steps_with_llm(self, raw_steps) -> List[Dict[str, Any]]:
+        """使用LLM优化流式思考步骤，生成更适合逐步展示的内容"""
+        
+        # 构建LLM提示
+        steps_text = ""
+        for i, step in enumerate(raw_steps, 1):
+            steps_text += f"步骤{i}:\n"
+            steps_text += f"思考: {step['thought']}\n"
+            steps_text += f"执行: {step['tool']}\n"
+            steps_text += f"结果: {step['observation'][:200]}...\n\n"
+        
+        prompt = f"""
+            请将以下AI助手的技术执行步骤转换为适合逐步展示的用户友好描述。
+
+            原始步骤:
+            {steps_text}
+
+            要求:
+            1. 每个步骤要有清晰的"正在做什么"和"处理结果"
+            2. 用自然、友好的语言，避免技术术语
+            3. 适合实时展示，让用户感受到处理进度
+            4. 每个步骤包含: 当前操作 + 处理状态 + 结果反馈
+            5. 保持简洁但信息完整
+
+            请按以下JSON格式返回:
+            [
+            {{
+                "content": "正在查询您的资产信息...",
+                "status": "processing",
+                "result": "已找到8个资产记录",
+                "result_type": "success",
+                "progress": "1/3"
+            }},
+            {{
+                "content": "分析资产分配状态...", 
+                "status": "processing",
+                "result": "识别出3个未分配资产",
+                "result_type": "success",
+                "progress": "2/3"
+            }}
+            ]
+            """
+
+        try:
+            # 创建一个简化的LLM实例用于优化
+            optimizer_llm = ChatOpenAI(
+                model=self.llm.model_name,
+                api_key=self.llm.openai_api_key,
+                base_url=self.llm.openai_api_base,
+                temperature=0.2,  # 更低温度保证一致性
+                max_tokens=1000,
+                timeout=20  # 稍长超时用于流式处理
+            )
+            
+            response = optimizer_llm.invoke(prompt)
+            
+            # 解析LLM返回的JSON
+            import re
+            json_match = re.search(r'\[.*\]', response.content, re.DOTALL)
+            if json_match:
+                steps_data = json.loads(json_match.group())
+                
+                # 转换为标准格式
+                optimized_steps = []
+                for i, step_data in enumerate(steps_data, 1):
+                    step_info = {
+                        "step": i,
+                        "type": "thinking",
+                        "content": step_data.get("content", "处理中..."),
+                        "status": step_data.get("status", "processing"),
+                        "result": step_data.get("result", "完成"),
+                        "result_type": step_data.get("result_type", "success"),
+                        "progress": step_data.get("progress", f"{i}/{len(steps_data)}"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    optimized_steps.append(step_info)
+                
+                logger.debug(f"LLM优化生成了 {len(optimized_steps)} 个流式步骤")
+                return optimized_steps
+            else:
+                logger.warning("LLM返回格式不正确，无法解析JSON")
+                raise ValueError("LLM返回格式错误")
+                
+        except Exception as e:
+            logger.error(f"LLM优化流式思考步骤失败: {str(e)}")
+            raise e
+
+    def _optimize_thinking_steps_with_llm(self, raw_steps) -> List[Dict[str, Any]]:
+        """使用LLM优化思考步骤，生成用户友好的描述"""
+        
+        # 构建LLM提示
+        steps_text = ""
+        for i, step in enumerate(raw_steps, 1):
+            steps_text += f"步骤{i}:\n"
+            steps_text += f"思考: {step['thought']}\n"
+            steps_text += f"执行: {step['tool']}\n"
+            steps_text += f"结果: {step['observation'][:200]}...\n\n"
+        
+        prompt = f"""
+            请将以下AI助手的技术执行步骤转换为用户友好的自然语言描述。
+            
+            原始步骤:
+            {steps_text}
+            
+            要求:
+            1. 用自然、友好的语言描述每个步骤在做什么
+            2. 不要提及具体的工具名称、API调用等技术细节
+            3. 专注于用户能理解的业务逻辑
+            4. 每个步骤包含: 在做什么 + 结果如何
+            5. 保持简洁明了，避免冗余
+            
+            请按以下JSON格式返回:
+            [
+              {{
+                "content": "正在查询您的资产信息",
+                "result": "找到了5个相关资产",
+                "result_type": "success"
+              }},
+              {{
+                "content": "分析资产状态和分配情况", 
+                "result": "识别出3个未分配的资产",
+                "result_type": "success"
+              }}
+            ]
+            """
+
+        try:
+            # 创建一个简化的LLM实例用于优化
+            optimizer_llm = ChatOpenAI(
+                model=self.llm.model_name,
+                api_key=self.llm.openai_api_key,
+                base_url=self.llm.openai_api_base,
+                temperature=0.3,  # 较低温度保证稳定输出
+                max_tokens=800,
+                timeout=15  # 较短超时避免影响主流程
+            )
+            
+            response = optimizer_llm.invoke(prompt)
+            
+            # 解析LLM返回的JSON
+            import re
+            json_match = re.search(r'\[.*\]', response.content, re.DOTALL)
+            if json_match:
+                steps_data = json.loads(json_match.group())
+                
+                # 转换为标准格式
+                optimized_steps = []
+                for i, step_data in enumerate(steps_data, 1):
+                    step_info = {
+                        "step": i,
+                        "type": "thinking",
+                        "content": step_data.get("content", "处理中..."),
+                        "result": step_data.get("result", "完成"),
+                        "result_type": step_data.get("result_type", "success"),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    optimized_steps.append(step_info)
+                
+                logger.debug(f"LLM优化生成了 {len(optimized_steps)} 个友好步骤")
+                return optimized_steps
+            else:
+                logger.warning("LLM返回格式不正确，无法解析JSON")
+                raise ValueError("LLM返回格式错误")
+                
+        except Exception as e:
+            logger.error(f"LLM优化思考步骤失败: {str(e)}")
+            raise e
+
+
 
     def _extract_allocation_info(self, output: str) -> Dict[str, Any]:
         """从输出中提取分配信息"""
@@ -240,6 +537,7 @@ class AssetManageAgent:
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import JSONResponse
+    from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     import uvicorn
     FASTAPI_AVAILABLE = True
@@ -265,6 +563,15 @@ def get_agent(mcp_server_url: str = None) -> AssetManageAgent:
 def create_app() -> FastAPI:
     app = FastAPI(title="智能资产管理Agent API", version="1.0.0")
 
+    # 添加CORS中间件支持跨域访问
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # 允许所有源，生产环境建议指定具体域名
+        allow_credentials=True,
+        allow_methods=["*"],  # 允许所有HTTP方法
+        allow_headers=["*"],  # 允许所有请求头
+    )
+
     @app.post("/process")
     async def process_request(request: ProcessRequestModel):
         try:
@@ -272,12 +579,86 @@ def create_app() -> FastAPI:
             return {"success": True, "data": agent.process_request(request.message)}
         except Exception as e:
             raise HTTPException(status_code=500, detail={"error": str(e)})
+    
+    @app.post("/process-stream")
+    async def process_request_stream(request: ProcessRequestModel):
+        """流式处理请求，实时返回思考步骤"""
+        from fastapi.responses import StreamingResponse
+        import asyncio
+        import json
+        
+        async def generate_thinking_stream():
+            try:
+                agent = get_agent(request.mcp_server_url)
+                
+                # 发送开始信号
+                yield f"data: {json.dumps({'type': 'start', 'message': '开始分析您的请求...'})}\n\n"
+                await asyncio.sleep(0.5)
+                
+                # 执行Agent处理
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, agent.process_request_with_streaming, request.message
+                )
+                
+                if result.get("success"):
+                    # 逐步发送思考步骤
+                    thinking_steps = result.get("thinking_steps", [])
+                    for i, step in enumerate(thinking_steps, 1):
+                        # 发送思考步骤
+                        yield f"data: {json.dumps({'type': 'thinking_step', 'step': i, 'data': step})}\n\n"
+                        await asyncio.sleep(0.8)  # 模拟处理时间
+                    
+                    # 发送最终结果
+                    final_result = {
+                        'type': 'final_result',
+                        'output': result.get("output", ""),
+                        'allocation_plan': result.get("allocation_plan", {}),
+                        'tools_used': result.get("tools_used", [])
+                    }
+                    yield f"data: {json.dumps(final_result)}\n\n"
+                else:
+                    # 发送错误信息
+                    yield f"data: {json.dumps({'type': 'error', 'message': result.get('message', '处理失败')})}\n\n"
+                
+                # 发送结束信号
+                yield f"data: {json.dumps({'type': 'end'})}\n\n"
+                
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'处理异常: {str(e)}'})}\n\n"
+        
+        return StreamingResponse(
+            generate_thinking_stream(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
 
     @app.get("/tools")
     async def get_available_tools():
         try:
             agent = get_agent()
             return {"success": True, "data": agent.get_available_tools()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail={"error": str(e)})
+
+    @app.get("/status")
+    async def get_status():
+        """获取Agent状态"""
+        try:
+            agent = get_agent()
+            return {
+                "success": True, 
+                "data": {
+                    "status": "running",
+                    "mcp_server_url": agent.mcp_client.server_url,
+                    "tools_count": len(agent.get_available_tools()),
+                    "cors_enabled": True
+                }
+            }
         except Exception as e:
             raise HTTPException(status_code=500, detail={"error": str(e)})
 

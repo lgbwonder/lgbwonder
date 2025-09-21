@@ -3,238 +3,189 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智能资产管理系统</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <title>智能资产管理助手</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="styles.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <!-- 头部 -->
-        <header class="header">
-            <div class="header-content">
+    <!-- 背景装饰 -->
+    <div class="background-decoration">
+        <div class="bg-shape shape-1"></div>
+        <div class="bg-shape shape-2"></div>
+        <div class="bg-shape shape-3"></div>
+    </div>
+
+    <!-- 主容器 -->
+    <div class="app-container">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
                 <div class="logo">
-                    <i class="fas fa-robot"></i>
-                    <h1>智能资产管理助手</h1>
-                </div>
-                <div class="header-right">
-                    <div class="token-info">
-                        <i class="fas fa-key"></i>
-                        <span>已配置令牌</span>
+                    <div class="logo-icon">
+                        <i class="fas fa-robot"></i>
                     </div>
-                    <div class="status-indicator">
-                        <span class="status-dot" id="statusDot"></span>
-                        <span id="statusText">连接中...</span>
+                    <div class="logo-text">
+                        <h1>智能助手</h1>
+                        <span>Asset Manager</span>
                     </div>
                 </div>
             </div>
-        </header>
+            
+            <div class="sidebar-content">
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name">管理员</div>
+                        <div class="user-status">
+                            <span class="status-dot online"></span>
+                            <span>在线</span>
+                        </div>
+                    </div>
+                </div>
 
-        <!-- 主要内容区域 -->
+                <div class="token-status">
+                    <div class="token-item">
+                        <i class="fas fa-key"></i>
+                        <div class="token-info">
+                            <div class="token-label">用户令牌</div>
+                            <div class="token-value" id="userTokenDisplay">cn-8cb35...7ee8</div>
+                        </div>
+                        <div class="token-indicator active"></div>
+                    </div>
+                    <div class="token-item">
+                        <i class="fas fa-shield-alt"></i>
+                        <div class="token-info">
+                            <div class="token-label">客户令牌</div>
+                            <div class="token-value" id="clientTokenDisplay">cn-1e522...786c</div>
+                        </div>
+                        <div class="token-indicator active"></div>
+                    </div>
+                </div>
+
+                <div class="quick-actions">
+                    <h3>快速操作</h3>
+                    <div class="action-buttons">
+                        <button class="action-btn" onclick="quickAction('query')">
+                            <i class="fas fa-search"></i>
+                            <span>查询资产</span>
+                        </button>
+                        <button class="action-btn" onclick="quickAction('allocate')">
+                            <i class="fas fa-share-alt"></i>
+                            <span>分配资产</span>
+                        </button>
+                        <button class="action-btn" onclick="quickAction('member')">
+                            <i class="fas fa-user-plus"></i>
+                            <span>管理成员</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
         <main class="main-content">
-            <!-- 聊天区域 -->
-            <section class="chat-area">
-                <div class="chat-header">
-                    <h2><i class="fas fa-comments"></i> 对话助手</h2>
+            <!-- 顶部栏 -->
+            <header class="top-bar">
+                <div class="top-bar-left">
+                    <button class="sidebar-toggle" onclick="toggleSidebar()">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="breadcrumb">
+                        <i class="fas fa-comments"></i>
+                        <span>智能对话</span>
+                    </div>
+                </div>
+                <div class="top-bar-right">
+                    <div class="mode-toggle">
+                        <button class="mode-btn" id="thinkingModeBtn" onclick="toggleThinkingMode()">
+                            <i class="fas fa-brain"></i>
+                            <span>思考模式</span>
+                        </button>
+                    </div>
                     <button class="clear-btn" onclick="clearChat()">
-                        <i class="fas fa-trash"></i> 清空对话
+                        <i class="fas fa-trash-alt"></i>
                     </button>
                 </div>
-                
+            </header>
+
+            <!-- 聊天区域 -->
+            <div class="chat-container">
                 <div class="chat-messages" id="chatMessages">
-                    <div class="message assistant">
-                        <div class="message-avatar">
+                    <!-- 欢迎消息 -->
+                    <div class="welcome-message">
+                        <div class="welcome-icon">
                             <i class="fas fa-robot"></i>
                         </div>
-                        <div class="message-content">
-                            <div class="message-text">
-                                👋 您好！我是您的智能资产管理助手！<br><br>
-                                🔑 系统已自动配置访问令牌，您可以直接使用以下功能：<br>
-                                📦 查询和管理企业资产<br>
-                                👥 添加和管理企业成员<br>
-                                🔗 分配资产权限<br>
-                                📋 查询资产产品详情<br><br>
-                                💬 请用自然语言告诉我您的需求，我会帮您处理！<br>
-                                <strong>例如：</strong><br>
-                                "查询所有未分配的资产"<br>
-                                "为用户张三分配一个广联达云锁资产"<br>
-                                "添加一个新的企业成员"
+                        <div class="welcome-content">
+                            <h3>欢迎使用智能资产管理助手！</h3>
+                            <p>我可以帮助您查询资产信息、分配资产权限、管理企业成员等。请告诉我您需要什么帮助。</p>
+                            <div class="welcome-suggestions">
+                                <button class="suggestion-btn" onclick="sendSuggestion('查询我的资产分配情况')">
+                                    <i class="fas fa-chart-bar"></i>
+                                    查询资产分配情况
+                                </button>
+                                <button class="suggestion-btn" onclick="sendSuggestion('为张三分配一个广联达云锁资产')">
+                                    <i class="fas fa-user-cog"></i>
+                                    分配资产给成员
+                                </button>
+                                <button class="suggestion-btn" onclick="sendSuggestion('查看未分配的资产列表')">
+                                    <i class="fas fa-list-ul"></i>
+                                    查看未分配资产
+                                </button>
                             </div>
-                            <div class="message-time">刚刚</div>
                         </div>
                     </div>
                 </div>
 
-                <div class="chat-input-area">
-                    <div class="input-container">
-                        <textarea 
-                            id="messageInput" 
-                            placeholder="请输入您的需求，例如：为用户张三分配一个广联达云锁资产..."
-                            rows="3"
-                        ></textarea>
-                        <div class="input-actions">
-                            <button class="send-btn" onclick="sendMessage()">
-                                <i class="fas fa-paper-plane"></i>
-                                发送
-                            </button>
+                <!-- 输入区域 -->
+                <div class="chat-input-container">
+                    <div class="input-wrapper">
+                        <div class="input-group">
+                            <textarea 
+                                id="messageInput" 
+                                placeholder="请输入您的需求，例如：为用户张三分配一个广联达云锁资产..."
+                                rows="1"
+                                maxlength="1000"
+                            ></textarea>
+                            <div class="input-actions">
+                                <button class="attachment-btn" title="附件">
+                                    <i class="fas fa-paperclip"></i>
+                                </button>
+                                <button class="emoji-btn" title="表情">
+                                    <i class="fas fa-smile"></i>
+                                </button>
+                                <button class="send-btn" onclick="sendMessage()" title="发送 (Ctrl+Enter)">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-footer">
+                            <div class="char-count">
+                                <span id="charCount">0</span>/1000
+                            </div>
+                            <div class="input-hint">
+                                按 Ctrl+Enter 发送消息
+                            </div>
                         </div>
                     </div>
                 </div>
-            </section>
+            </div>
         </main>
     </div>
 
-    <!-- 模态对话框 -->
-    <!-- 令牌获取对话框 -->
-    <div id="tokenModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-key"></i> 获取访问令牌</h3>
-                <button class="close-btn" onclick="closeModal('tokenModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>令牌类型:</label>
-                    <select id="tokenType">
-                        <option value="client">客户端令牌</option>
-                        <option value="user">用户令牌</option>
-                    </select>
-                </div>
-                <div class="form-group" id="uidGroup" style="display: none;">
-                    <label>用户ID:</label>
-                    <input type="text" id="userUid" placeholder="请输入用户ID">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeModal('tokenModal')">取消</button>
-                <button class="btn-primary" onclick="generateToken()">生成令牌</button>
-            </div>
+    <!-- 加载指示器 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <div class="loading-text">AI正在思考中...</div>
         </div>
     </div>
 
-    <!-- 添加成员对话框 -->
-    <div id="memberModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-user-plus"></i> 添加企业成员</h3>
-                <button class="close-btn" onclick="closeModal('memberModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>用户令牌:</label>
-                    <input type="text" id="memberUserToken" placeholder="请输入用户令牌">
-                </div>
-                <div class="form-group">
-                    <label>用户名:</label>
-                    <input type="text" id="memberUserName" placeholder="只能包含字母和数字，2-30个字符">
-                </div>
-                <div class="form-group">
-                    <label>密码:</label>
-                    <input type="password" id="memberPassword" placeholder="8-16个字符，包含至少两种字符类型">
-                </div>
-                <div class="form-group">
-                    <label>姓名:</label>
-                    <input type="text" id="memberName" placeholder="用户全名，最多30个字符">
-                </div>
-                <div class="form-group">
-                    <label>密保手机:</label>
-                    <input type="text" id="memberPhone" placeholder="用于密码找回（可选）">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeModal('memberModal')">取消</button>
-                <button class="btn-primary" onclick="addMember()">添加成员</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 查询资产对话框 -->
-    <div id="assetModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-search"></i> 查询资产</h3>
-                <button class="close-btn" onclick="closeModal('assetModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>用户令牌:</label>
-                    <input type="text" id="assetUserToken" placeholder="请输入用户令牌">
-                </div>
-                <div class="form-group">
-                    <label>客户端令牌:</label>
-                    <input type="text" id="assetClientToken" placeholder="请输入客户端令牌">
-                </div>
-                <div class="form-group">
-                    <label>搜索类型:</label>
-                    <select id="assetSearchType">
-                        <option value="productName">产品名称</option>
-                        <option value="productUri">产品URI</option>
-                        <option value="assetNum">资产编号</option>
-                        <option value="memberAccount">成员账号</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>搜索条件:</label>
-                    <input type="text" id="assetSearchCondition" placeholder="请输入搜索条件">
-                </div>
-                <div class="form-group">
-                    <label>资产状态:</label>
-                    <div class="checkbox-group">
-                        <label><input type="checkbox" value="VALID"> 有效</label>
-                        <label><input type="checkbox" value="UNASSIGNED" checked> 未分配</label>
-                        <label><input type="checkbox" value="ASSIGNED"> 已分配</label>
-                        <label><input type="checkbox" value="EXPIRED"> 过期</label>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeModal('assetModal')">取消</button>
-                <button class="btn-primary" onclick="queryAssets()">查询资产</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 分配资产对话框 -->
-    <div id="allocationModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-share-alt"></i> 分配资产</h3>
-                <button class="close-btn" onclick="closeModal('allocationModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>用户令牌:</label>
-                    <input type="text" id="allocUserToken" placeholder="请输入用户令牌">
-                </div>
-                <div class="form-group">
-                    <label>客户端令牌:</label>
-                    <input type="text" id="allocClientToken" placeholder="请输入客户端令牌">
-                </div>
-                <div class="form-group">
-                    <label>资产编号:</label>
-                    <input type="text" id="allocAssetNum" placeholder="请输入资产编号">
-                </div>
-                <div class="form-group">
-                    <label>资产ID:</label>
-                    <input type="text" id="allocAssetId" placeholder="请输入资产ID">
-                </div>
-                <div class="form-group">
-                    <label>成员ID:</label>
-                    <input type="text" id="allocMemberId" placeholder="请输入成员ID">
-                </div>
-                <div class="form-group">
-                    <label>操作类型:</label>
-                    <select id="allocAssignType">
-                        <option value="assign">分配权限</option>
-                        <option value="unassign">取消分配</option>
-                    </select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn-secondary" onclick="closeModal('allocationModal')">取消</button>
-                <button class="btn-primary" onclick="allocateAsset()">执行分配</button>
-            </div>
-        </div>
-    </div>
+    <!-- Toast 通知 -->
+    <div class="toast-container" id="toastContainer"></div>
 
     <script src="script.js"></script>
 </body>
