@@ -4,114 +4,78 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能资产管理助手</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="styles.css" rel="stylesheet">
 </head>
 <body>
-    <!-- 背景装饰 -->
-    <div class="background-decoration">
-        <div class="bg-shape shape-1"></div>
-        <div class="bg-shape shape-2"></div>
-        <div class="bg-shape shape-3"></div>
-    </div>
-
-    <!-- 主容器 -->
     <div class="app-container">
         <!-- 侧边栏 -->
-        <aside class="sidebar">
+        <div class="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon">
-                        <i class="fas fa-robot"></i>
-                    </div>
-                    <div class="logo-text">
-                        <h1>智能助手</h1>
-                        <span>Asset Manager</span>
-                    </div>
+                    <i class="fas fa-cube"></i>
+                    <span>智能助手</span>
                 </div>
             </div>
             
-            <div class="sidebar-content">
-                <div class="user-info">
-                    <div class="user-avatar">
-                        <i class="fas fa-user"></i>
-                    </div>
-                    <div class="user-details">
-                        <div class="user-name">管理员</div>
-                        <div class="user-status">
-                            <span class="status-dot online"></span>
-                            <span>在线</span>
-                        </div>
-                    </div>
+            <div class="user-info">
+                <div class="user-avatar">
+                    <i class="fas fa-user"></i>
                 </div>
-
-                <div class="token-status">
-                    <div class="token-item">
-                        <i class="fas fa-key"></i>
-                        <div class="token-info">
-                            <div class="token-label">用户令牌</div>
-                            <div class="token-value" id="userTokenDisplay">cn-8cb35...7ee8</div>
-                        </div>
-                        <div class="token-indicator active"></div>
-                    </div>
-                    <div class="token-item">
-                        <i class="fas fa-shield-alt"></i>
-                        <div class="token-info">
-                            <div class="token-label">客户令牌</div>
-                            <div class="token-value" id="clientTokenDisplay">cn-1e522...786c</div>
-                        </div>
-                        <div class="token-indicator active"></div>
-                    </div>
+                <div class="user-name">管理员</div>
+                <div class="user-status">在线</div>
+            </div>
+            
+            <div class="token-status">
+                <div class="token-item">
+                    <span class="token-label">用户令牌</span>
+                    <span class="token-value" id="userTokenDisplay">加载中...</span>
                 </div>
-
-                <div class="quick-actions">
-                    <h3>快速操作</h3>
-                    <div class="action-buttons">
-                        <button class="action-btn" onclick="quickAction('query')">
-                            <i class="fas fa-search"></i>
-                            <span>查询资产</span>
-                        </button>
-                        <button class="action-btn" onclick="quickAction('allocate')">
-                            <i class="fas fa-share-alt"></i>
-                            <span>分配资产</span>
-                        </button>
-                        <button class="action-btn" onclick="quickAction('member')">
-                            <i class="fas fa-user-plus"></i>
-                            <span>管理成员</span>
-                        </button>
-                    </div>
+                <div class="token-item">
+                    <span class="token-label">客户端令牌</span>
+                    <span class="token-value" id="clientTokenDisplay">加载中...</span>
                 </div>
             </div>
-        </aside>
+            
+            <div class="quick-actions">
+                <h3>快速操作</h3>
+                <button class="action-btn" onclick="sendSuggestion('查询所有未分配的资产')">
+                    <i class="fas fa-search"></i>
+                    <span>查询资产</span>
+                </button>
+                <button class="action-btn" onclick="sendSuggestion('分配资产权限')">
+                    <i class="fas fa-key"></i>
+                    <span>分配权限</span>
+                </button>
+                <button class="action-btn" onclick="sendSuggestion('添加新成员账号')">
+                    <i class="fas fa-user-plus"></i>
+                    <span>管理成员</span>
+                </button>
+            </div>
+        </div>
 
-        <!-- 主内容区 -->
-        <main class="main-content">
+        <!-- 主内容区域 -->
+        <div class="main-content">
             <!-- 顶部栏 -->
-            <header class="top-bar">
+            <div class="top-bar">
                 <div class="top-bar-left">
                     <button class="sidebar-toggle" onclick="toggleSidebar()">
                         <i class="fas fa-bars"></i>
                     </button>
-                    <div class="breadcrumb">
-                        <i class="fas fa-comments"></i>
-                        <span>智能对话</span>
-                    </div>
+                    <h1 class="page-title">智能资产管理助手</h1>
                 </div>
                 <div class="top-bar-right">
-                    <div class="mode-toggle">
-                        <button class="mode-btn" id="thinkingModeBtn" onclick="toggleThinkingMode()">
-                            <i class="fas fa-brain"></i>
-                            <span>思考模式</span>
-                        </button>
+                    <div class="status-indicator">
+                        <div class="status-dot"></div>
+                        <span>系统正常</span>
                     </div>
-                    <button class="clear-btn" onclick="clearChat()">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
                 </div>
-            </header>
+            </div>
 
-            <!-- 聊天区域 -->
+            <!-- 聊天容器 -->
             <div class="chat-container">
                 <div class="chat-messages" id="chatMessages">
                     <!-- 欢迎消息 -->
@@ -119,72 +83,61 @@
                         <div class="welcome-icon">
                             <i class="fas fa-robot"></i>
                         </div>
-                        <div class="welcome-content">
-                            <h3>欢迎使用智能资产管理助手！</h3>
-                            <p>我可以帮助您查询资产信息、分配资产权限、管理企业成员等。请告诉我您需要什么帮助。</p>
-                            <div class="welcome-suggestions">
-                                <button class="suggestion-btn" onclick="sendSuggestion('查询我的资产分配情况')">
-                                    <i class="fas fa-chart-bar"></i>
-                                    查询资产分配情况
-                                </button>
-                                <button class="suggestion-btn" onclick="sendSuggestion('为张三分配一个广联达云锁资产')">
-                                    <i class="fas fa-user-cog"></i>
-                                    分配资产给成员
-                                </button>
-                                <button class="suggestion-btn" onclick="sendSuggestion('查看未分配的资产列表')">
-                                    <i class="fas fa-list-ul"></i>
-                                    查看未分配资产
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 输入区域 -->
-                <div class="chat-input-container">
-                    <div class="input-wrapper">
-                        <div class="input-group">
-                            <textarea 
-                                id="messageInput" 
-                                placeholder="请输入您的需求，例如：为用户张三分配一个广联达云锁资产..."
-                                rows="1"
-                                maxlength="1000"
-                            ></textarea>
-                            <div class="input-actions">
-                                <button class="attachment-btn" title="附件">
-                                    <i class="fas fa-paperclip"></i>
-                                </button>
-                                <button class="emoji-btn" title="表情">
-                                    <i class="fas fa-smile"></i>
-                                </button>
-                                <button class="send-btn" onclick="sendMessage()" title="发送 (Ctrl+Enter)">
-                                    <i class="fas fa-paper-plane"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="input-footer">
-                            <div class="char-count">
-                                <span id="charCount">0</span>/1000
-                            </div>
-                            <div class="input-hint">
-                                按 Ctrl+Enter 发送消息
-                            </div>
-                        </div>
+                        <h2>你好！我是智能资产管理助手</h2>
+                        <p>我可以帮助您进行资产查询、权限分配、成员管理等操作</p>
                     </div>
                 </div>
             </div>
-        </main>
-    </div>
 
-    <!-- 加载指示器 -->
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner">
-            <div class="spinner"></div>
-            <div class="loading-text">AI正在思考中...</div>
+            <!-- 顶部新对话按钮 -->
+            <div class="new-chat-container">
+                <button class="new-chat-btn" onclick="startNewChat()">
+                    <i class="fas fa-plus"></i>
+                    <span>开启新对话</span>
+                </button>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="chat-input-container">
+                <div class="input-group">
+                    <div class="input-wrapper">
+                        <div class="input-actions-left">
+                            <button class="attachment-btn" title="添加附件">
+                                <i class="fas fa-paperclip"></i>
+                            </button>
+                            <button class="voice-btn" title="语音输入">
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                        </div>
+                        <textarea 
+                            id="messageInput" 
+                            class="message-input" 
+                            placeholder="给 智能资产管理助手 发送消息"
+                            rows="1"
+                        ></textarea>
+                    </div>
+                    <button id="stopBtn" class="stop-btn" onclick="stopProcessing()" style="display: none;">
+                        <i class="fas fa-stop"></i>
+                    </button>
+                    <button id="sendBtn" class="send-btn" onclick="sendMessage()">
+                        <i class="fas fa-arrow-up"></i>
+                    </button>
+                </div>
+                <div class="input-hint">
+                    <span class="char-count" id="charCount">0/2000</span>
+                    <span>Ctrl+Shift+N 新对话 | 由 AI 生成，请谨慎甄别</span>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Toast 通知 -->
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">正在处理您的请求...</div>
+    </div>
+
+    <!-- 提示消息容器 -->
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="script.js"></script>
