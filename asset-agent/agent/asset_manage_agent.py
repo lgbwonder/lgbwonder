@@ -108,12 +108,21 @@ class AssetManageAgent:
                 第一步：查询用户名为张三的授权成员，使用工具query_enterprise_members_mcp
                 第二步：查询有效且未分配并且包含计价产品的资产，使用工具query_assets_by_status_mcp
                 第三步：给张三分配资产，使用工具allocate_asset_privileges_mcp
+            3、创建账号并分配资产的完整流程（重要！）
+                第一步：创建新账号，使用工具add_enterprise_member_mcp
+                第二步：查询企业成员确认账号创建成功，使用工具query_enterprise_members_mcp
+                第三步：查询包含指定产品的未分配资产，使用工具query_assets_by_status_mcp
+                第四步：为新创建的成员分配找到的资产，使用工具allocate_asset_privileges_mcp
 
             自然语言理解指南:
-            - "创建账号XXX" → userName="XXX", name="XXX"
+            - "创建账号XXX" → userName="XXX", name="XXX" 
             - "密码为XXX" → password="XXX"
             - "密保手机为XXX" → passwordMobile="XXX"
             - "查询未分配资产" → assetStatus=["UNASSIGNED", "VALID"]
+            - "包含XXX产品的资产" → searchType="productName", searchCondition="XXX"
+            - "广联达云计价平台概算GEB" → searchCondition="广联达云计价平台概算GEB"
+            - "创建账号并分配资产" → 需要执行完整的4步流程
+            - "为该账号分配" → 需要先查询成员，再查询资产，最后分配权限
             
             令牌识别指南:
             - 如果用户请求中包含 "系统提供的认证信息" 或 "userToken:" 或 "clientToken:"，直接提取使用
@@ -144,6 +153,8 @@ class AssetManageAgent:
             - mcp工具调用时参数类型、参数个数严格按照接口描述进行传递
             - 新成员的 globalId 不为 memberId
             - 禁止调用: 如果用户输入中包含"系统提供的认证信息"，说明已有token，严禁调用generate_client_token_mcp和generate_user_token_mcp
+            - 复合任务必须按顺序执行: 创建账号→查询成员→查询资产→分配权限
+            - 查询产品时使用完整产品名称作为searchCondition，例如"广联达云计价平台概算GEB"
             {agent_scratchpad}
         """)
 
@@ -245,7 +256,22 @@ class AssetManageAgent:
         args.clear()
         args.update(filtered_args)
         
-        # 检查必需参数
+        # 智能参数补全（在必需参数检查之前执行）
+        self._auto_complete_parameters(tool_name, args, properties)
+        
+        # 重新过滤参数（补全后可能增加了新参数）
+        final_filtered_args = {}
+        for key, value in args.items():
+            if key in allowed_params:
+                final_filtered_args[key] = value
+            else:
+                logger.debug(f"过滤掉补全后不需要的参数: {key}")
+        
+        # 更新args为最终过滤后的参数
+        args.clear()
+        args.update(final_filtered_args)
+        
+        # 检查必需参数（在智能补全之后检查）
         missing_params = []
         for param in required_params:
             if param not in args:
@@ -263,9 +289,6 @@ class AssetManageAgent:
         validation_error = self._apply_dynamic_validation_rules(tool_name, args, properties)
         if validation_error:
             return validation_error
-        
-        # 智能参数补全
-        self._auto_complete_parameters(tool_name, args, properties)
         
         return None
 
@@ -412,8 +435,8 @@ class AssetManageAgent:
     def _auto_complete_parameters(self, tool_name: str, args: Dict, properties: Dict) -> None:
         """智能参数补全"""
         
-        # 首先尝试从当前消息中提取token
-        self._extract_tokens_from_message(args)
+        # 首先尝试从当前消息中提取token（基于工具参数要求）
+        self._extract_tokens_from_message(args, properties)
         
         # 基于工具描述进行参数补全
         for param_name, param_info in properties.items():
@@ -488,28 +511,30 @@ class AssetManageAgent:
         
         logger.debug(f"参数补全完成，最终参数: {args}")
 
-    def _extract_tokens_from_message(self, args: Dict) -> None:
-        """从当前消息中提取token并补全到参数中"""
-        if hasattr(self, '_current_message') and self._current_message:
-            import re
+    def _extract_tokens_from_message(self, args: Dict, properties: Dict) -> None:
+        """从当前消息中提取token并补全到参数中（仅当工具需要时）"""
+        if not hasattr(self, '_current_message') or not self._current_message:
+            return
             
-            # 提取userToken（匹配格式：- userToken: cn-xxx）
-            if "userToken" not in args:
-                user_token_match = re.search(r'-\s*userToken:\s*([^\s\n]+)', self._current_message)
-                if user_token_match:
-                    args["userToken"] = user_token_match.group(1)
-                    logger.info(f"从消息中提取并补全 userToken: {user_token_match.group(1)[:20]}...")
-                else:
-                    logger.warning("未能从消息中提取userToken")
-            
-            # 提取clientToken（匹配格式：- clientToken: cn-xxx）
-            if "clientToken" not in args:
-                client_token_match = re.search(r'-\s*clientToken:\s*([^\s\n]+)', self._current_message)
-                if client_token_match:
-                    args["clientToken"] = client_token_match.group(1)
-                    logger.info(f"从消息中提取并补全 clientToken: {client_token_match.group(1)[:20]}...")
-                else:
-                    logger.warning("未能从消息中提取clientToken")
+        import re
+        
+        # 只有当工具参数中定义了userToken时才提取
+        if "userToken" in properties and "userToken" not in args:
+            user_token_match = re.search(r'-\s*userToken:\s*([^\s\n]+)', self._current_message)
+            if user_token_match:
+                args["userToken"] = user_token_match.group(1)
+                logger.info(f"从消息中提取并补全 userToken: {user_token_match.group(1)[:20]}...")
+            else:
+                logger.warning("工具需要userToken但未能从消息中提取")
+        
+        # 只有当工具参数中定义了clientToken时才提取
+        if "clientToken" in properties and "clientToken" not in args:
+            client_token_match = re.search(r'-\s*clientToken:\s*([^\s\n]+)', self._current_message)
+            if client_token_match:
+                args["clientToken"] = client_token_match.group(1)
+                logger.info(f"从消息中提取并补全 clientToken: {client_token_match.group(1)[:20]}...")
+            else:
+                logger.warning("工具需要clientToken但未能从消息中提取")
 
     def _validate_parameter_types(self, args: Dict, properties: Dict) -> Optional[str]:
         """基于工具描述验证参数类型"""
