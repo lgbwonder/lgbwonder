@@ -369,6 +369,7 @@ body {
     gap: 12px;
     margin-bottom: 24px;
     animation: fadeIn 0.3s ease-out;
+    position: relative;
 }
 
 .message.user {
@@ -984,5 +985,282 @@ body {
     .suggestion-item {
         padding: 12px;
         font-size: 13px;
+    }
+}
+
+/* 消息交互按钮 */
+.message-interaction {
+    position: absolute;
+    bottom: 8px;
+    right: 12px;
+    z-index: 10;
+}
+
+.interaction-buttons {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    background: rgba(17, 17, 17, 0.9);
+    backdrop-filter: blur(8px);
+    border-radius: 20px;
+    padding: 4px 8px;
+    border: 1px solid #2a2a2a;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.interaction-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    color: #888888;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.interaction-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #cccccc;
+    transform: scale(1.1);
+}
+
+.interaction-btn span {
+    display: none;
+}
+
+.interaction-btn.active {
+    border-color: currentColor;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.interaction-btn i {
+    font-size: 11px;
+}
+
+.regenerate-btn:hover {
+    color: #4a9eff;
+    background: rgba(74, 158, 255, 0.15);
+}
+
+.like-btn:hover {
+    color: #00d26a;
+    background: rgba(0, 210, 106, 0.15);
+}
+
+.like-btn.active {
+    color: #00d26a;
+    background: rgba(0, 210, 106, 0.2);
+}
+
+.dislike-btn:hover {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.dislike-btn.active {
+    color: #ff6b6b;
+    background: rgba(255, 107, 107, 0.2);
+}
+
+/* 反馈模态框 */
+.feedback-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.feedback-modal.show {
+    opacity: 1;
+}
+
+.feedback-modal-content {
+    background: #1a1a1a;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 80vh;
+    overflow-y: auto;
+    border: 1px solid #3a3a3a;
+    transform: translateY(-20px);
+    transition: transform 0.3s ease;
+}
+
+.feedback-modal.show .feedback-modal-content {
+    transform: translateY(0);
+}
+
+.feedback-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.feedback-header h3 {
+    margin: 0;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #888888;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+    background: #2a2a2a;
+    color: #cccccc;
+}
+
+.feedback-body {
+    padding: 20px 24px;
+}
+
+.feedback-body textarea {
+    width: 100%;
+    min-height: 100px;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    padding: 12px;
+    color: #ffffff;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.feedback-body textarea:focus {
+    outline: none;
+    border-color: #4a9eff;
+    box-shadow: 0 0 0 2px rgba(74, 158, 255, 0.1);
+}
+
+.feedback-body textarea::placeholder {
+    color: #666666;
+}
+
+.feedback-options {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.feedback-options label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cccccc;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+}
+
+.feedback-options label:hover {
+    background: #2a2a2a;
+}
+
+.feedback-options input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #4a9eff;
+}
+
+.feedback-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px 20px;
+    border-top: 1px solid #2a2a2a;
+}
+
+.btn-cancel,
+.btn-submit {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.btn-cancel {
+    background: transparent;
+    color: #888888;
+    border: 1px solid #3a3a3a;
+}
+
+.btn-cancel:hover {
+    background: #2a2a2a;
+    color: #cccccc;
+}
+
+.btn-submit {
+    background: #4a9eff;
+    color: #ffffff;
+}
+
+.btn-submit:hover {
+    background: #3a8eef;
+}
+
+/* 响应式设计 - 交互按钮 */
+@media (max-width: 768px) {
+    .message-interaction {
+        bottom: 4px;
+        right: 8px;
+    }
+    
+    .interaction-buttons {
+        padding: 3px 6px;
+        gap: 4px;
+    }
+    
+    .interaction-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+    }
+    
+    .feedback-modal-content {
+        width: 95%;
+        margin: 20px;
+    }
+    
+    .feedback-options {
+        grid-template-columns: 1fr;
     }
 } 

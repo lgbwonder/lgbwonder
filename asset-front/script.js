@@ -511,12 +511,12 @@ async function createThinkingContainer() {
     
     containerDiv.innerHTML = `
         <div class="message-avatar">
-            <i class="fas fa-brain"></i>
+            <i class="fas fa-robot"></i>
         </div>
         <div class="message-content">
             <div class="message-text">
                 <div class="thinking-header">
-                    <span class="thinking-dots">思考中<span class="dots"></span></span>
+                    <span class="thinking-dots">分析中<span class="dots"></span></span>
                 </div>
                 <div class="thinking-steps"></div>
             </div>
@@ -750,6 +750,11 @@ async function showFinalResult(resultData) {
     
     await typewriterEffect(resultContent, originalText);
     
+    // 添加交互按钮（只在AI回复上显示）
+    // 获取最后一条用户消息作为重新生成的输入
+    const lastUserMessage = getLastUserMessage();
+    await addInteractionButtons(resultDiv, lastUserMessage);
+    
     scrollToBottom();
 }
 
@@ -771,6 +776,236 @@ async function typewriterEffect(element, text) {
         // 保存当前动画引用，以便可能的取消
         currentTypingAnimation = timer;
     });
+}
+
+// 获取最后一条用户消息
+function getLastUserMessage() {
+    const chatMessages = document.getElementById('chatMessages');
+    const userMessages = chatMessages.querySelectorAll('.message.user .message-text');
+    if (userMessages.length > 0) {
+        const lastUserMessage = userMessages[userMessages.length - 1];
+        return lastUserMessage.textContent.trim();
+    }
+    return '';
+}
+
+// 添加交互按钮
+async function addInteractionButtons(messageDiv, originalMessage) {
+    // 等待一小段时间再显示按钮
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const interactionDiv = document.createElement('div');
+    interactionDiv.className = 'message-interaction';
+    
+    // 创建按钮容器
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.className = 'interaction-buttons';
+    
+    // 重新生成按钮
+    const regenerateBtn = document.createElement('button');
+    regenerateBtn.className = 'interaction-btn regenerate-btn';
+    regenerateBtn.innerHTML = '<i class="fas fa-redo"></i>';
+    regenerateBtn.title = '重新生成';
+    regenerateBtn.onclick = () => regenerateResponse(originalMessage);
+    
+    // 喜欢按钮
+    const likeBtn = document.createElement('button');
+    likeBtn.className = 'interaction-btn like-btn';
+    likeBtn.innerHTML = '<i class="fas fa-thumbs-up"></i>';
+    likeBtn.title = '喜欢';
+    likeBtn.onclick = () => likeResponse(likeBtn);
+    
+    // 不喜欢按钮
+    const dislikeBtn = document.createElement('button');
+    dislikeBtn.className = 'interaction-btn dislike-btn';
+    dislikeBtn.innerHTML = '<i class="fas fa-thumbs-down"></i>';
+    dislikeBtn.title = '不喜欢';
+    dislikeBtn.onclick = () => dislikeResponse(dislikeBtn);
+    
+    buttonsContainer.appendChild(regenerateBtn);
+    buttonsContainer.appendChild(likeBtn);
+    buttonsContainer.appendChild(dislikeBtn);
+    interactionDiv.appendChild(buttonsContainer);
+    
+    messageDiv.appendChild(interactionDiv);
+    
+    // 添加入场动画
+    interactionDiv.style.opacity = '0';
+    interactionDiv.style.transform = 'translateY(10px) scale(0.8)';
+    
+    setTimeout(() => {
+        interactionDiv.style.transition = 'all 400ms cubic-bezier(0.34, 1.56, 0.64, 1)';
+        interactionDiv.style.opacity = '1';
+        interactionDiv.style.transform = 'translateY(0) scale(1)';
+    }, 200);
+    
+    scrollToBottom();
+}
+
+// 重新生成响应
+async function regenerateResponse(originalMessage) {
+    // 显示确认提示
+    if (!confirm('确定要重新生成回答吗？这将开始一个新的对话。')) {
+        return;
+    }
+    
+    // 停止当前处理（如果有）
+    if (isProcessing) {
+        stopProcessing();
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    // 设置输入框内容并发送
+    const messageInput = document.getElementById('messageInput');
+    messageInput.value = originalMessage;
+    updateCharCount();
+    autoResizeTextarea();
+    
+    // 发送消息
+    await sendMessage();
+}
+
+// 喜欢响应
+function likeResponse(button) {
+    // 移除其他按钮的激活状态
+    const parentDiv = button.closest('.interaction-buttons');
+    const dislikeBtn = parentDiv.querySelector('.dislike-btn');
+    dislikeBtn.classList.remove('active');
+    
+    // 切换当前按钮状态
+    button.classList.toggle('active');
+    
+    const isLiked = button.classList.contains('active');
+    
+    if (isLiked) {
+        button.title = '已喜欢';
+        showToast('感谢您的反馈！', 'success');
+        
+        // 这里可以发送喜欢的数据到后端
+        sendFeedback('like');
+    } else {
+        button.title = '喜欢';
+    }
+}
+
+// 不喜欢响应
+function dislikeResponse(button) {
+    // 移除其他按钮的激活状态
+    const parentDiv = button.closest('.interaction-buttons');
+    const likeBtn = parentDiv.querySelector('.like-btn');
+    likeBtn.classList.remove('active');
+    likeBtn.title = '喜欢';
+    
+    // 切换当前按钮状态
+    button.classList.toggle('active');
+    
+    const isDisliked = button.classList.contains('active');
+    
+    if (isDisliked) {
+        button.title = '已标记';
+        
+        // 显示反馈输入框
+        showFeedbackModal();
+        
+        // 这里可以发送不喜欢的数据到后端
+        sendFeedback('dislike');
+    } else {
+        button.title = '不喜欢';
+    }
+}
+
+// 显示反馈模态框
+function showFeedbackModal() {
+    const modal = document.createElement('div');
+    modal.className = 'feedback-modal';
+    modal.innerHTML = `
+        <div class="feedback-modal-content">
+            <div class="feedback-header">
+                <h3>请告诉我们改进建议</h3>
+                <button class="close-btn" onclick="closeFeedbackModal()">&times;</button>
+            </div>
+            <div class="feedback-body">
+                <textarea id="feedbackText" placeholder="请描述您遇到的问题或改进建议..." rows="4"></textarea>
+                <div class="feedback-options">
+                    <label><input type="checkbox" value="inaccurate"> 信息不准确</label>
+                    <label><input type="checkbox" value="incomplete"> 回答不完整</label>
+                    <label><input type="checkbox" value="unclear"> 表达不清楚</label>
+                    <label><input type="checkbox" value="slow"> 响应太慢</label>
+                </div>
+            </div>
+            <div class="feedback-footer">
+                <button class="btn-cancel" onclick="closeFeedbackModal()">取消</button>
+                <button class="btn-submit" onclick="submitFeedback()">提交反馈</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    // 添加动画
+    setTimeout(() => {
+        modal.classList.add('show');
+    }, 10);
+    
+    // 聚焦到文本框
+    setTimeout(() => {
+        document.getElementById('feedbackText').focus();
+    }, 300);
+}
+
+// 关闭反馈模态框
+function closeFeedbackModal() {
+    const modal = document.querySelector('.feedback-modal');
+    if (modal) {
+        modal.classList.remove('show');
+        setTimeout(() => {
+            modal.remove();
+        }, 300);
+    }
+}
+
+// 提交反馈
+function submitFeedback() {
+    const feedbackText = document.getElementById('feedbackText').value;
+    const selectedOptions = Array.from(document.querySelectorAll('.feedback-options input:checked'))
+        .map(input => input.value);
+    
+    if (!feedbackText.trim() && selectedOptions.length === 0) {
+        showToast('请提供反馈内容或选择问题类型', 'warning');
+        return;
+    }
+    
+    // 发送反馈到后端
+    sendFeedback('detailed_feedback', {
+        text: feedbackText,
+        issues: selectedOptions
+    });
+    
+    showToast('感谢您的反馈！我们会持续改进。', 'success');
+    closeFeedbackModal();
+}
+
+// 发送反馈数据到后端
+async function sendFeedback(type, data = {}) {
+    try {
+        const feedbackData = {
+            type: type,
+            timestamp: new Date().toISOString(),
+            data: data
+        };
+        
+        console.log('发送反馈:', feedbackData);
+        
+        // 这里可以实际发送到后端API
+        // await fetch('/api/feedback', {
+        //     method: 'POST',
+        //     headers: { 'Content-Type': 'application/json' },
+        //     body: JSON.stringify(feedbackData)
+        // });
+        
+    } catch (error) {
+        console.error('发送反馈失败:', error);
+    }
 }
 
 // 添加消息（带动画）

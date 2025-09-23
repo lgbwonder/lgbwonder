@@ -91,6 +91,16 @@ class AssetManageAgent:
             2. 创建或查询成员 (add_enterprise_member_mcp, query_enterprise_members_mcp)
             3. 查询资产状态 (query_assets_by_status_mcp)
             4. 分配资产权限 (allocate_asset_privileges_mcp)
+            
+            实例流程：
+            1、查询张三已分配的资产详情
+                第一步：确定用户是通过用户名查询已分配有效资产
+                第二步：确认参数searchType=memberAccount，searchCondition=张三，assetStatus=[VALID,ASSIGNED]
+                第三步：查询资产状态 query_assets_by_status_mcp 进行查询
+            2、给张三分配一个包含计价产品的资产    
+                第一步：查询用户名为张三的授权成员
+                第二步：查询有效且未分配并且包含计价产品的资产
+                第三步：给张三分配资产
 
             自然语言理解指南:
             - "创建账号XXX" → userName="XXX", name="XXX"
@@ -162,6 +172,12 @@ class AssetManageAgent:
             if not isinstance(args, dict):
                 return f"参数类型错误: {type(args)}。请使用JSON格式的参数。"
 
+            # 参数验证和智能补全
+            validation_error = self._validate_tool_parameters(tool_name, args)
+            if validation_error:
+                logger.warning(f"参数验证失败: {validation_error}")
+                return f"参数验证失败: {validation_error}"
+
             logger.info(f"调用MCP工具: {tool_name}")
             result = self.mcp_client.call_tool(tool_name, args)
 
@@ -174,6 +190,218 @@ class AssetManageAgent:
         except Exception as e:
             logger.error(f"调用MCP工具异常: {str(e)}")
             return f"工具调用异常: {str(e)}"
+
+    def _validate_tool_parameters(self, tool_name: str, args: Dict) -> Optional[str]:
+        """验证工具参数，并进行智能补全和过滤"""
+        # 定义每个工具的必需参数和可选参数
+        tool_params = {
+            "query_assets_by_status_mcp": {
+                "required": ["userToken", "clientToken", "searchType", "searchCondition", "assetStatus"],
+                "optional": ["pageNum", "pageSize"]
+            },
+            "allocate_asset_privileges_mcp": {
+                "required": ["userToken", "clientToken", "assignType", "assetPrivileges"],
+                "optional": []
+            },
+            "query_enterprise_members_mcp": {
+                "required": ["userToken", "clientToken"],
+                "optional": ["keyword"]
+            },
+            "generate_client_token_mcp": {
+                "required": ["grantType"],
+                "optional": []
+            },
+            "generate_user_token_mcp": {
+                "required": ["grantType"],
+                "optional": ["uid"]
+            },
+            "query_asset_products_mcp": {
+                "required": ["userToken", "clientToken", "assetId"],
+                "optional": []
+            },
+            "add_enterprise_member_mcp": {
+                "required": ["userToken", "userName", "password", "name"],
+                "optional": ["departmentId", "remark", "passwordMobile", "regionCode"]
+            },
+            "renew_asset_product_mcp": {
+                "required": ["customerId", "licenseId", "limitEndTime"],
+                "optional": ["limitStartTime"]
+            }
+        }
+        
+        if tool_name in tool_params:
+            tool_config = tool_params[tool_name]
+            required_params = tool_config["required"]
+            allowed_params = tool_config["required"] + tool_config["optional"]
+            
+            # 过滤掉不需要的参数
+            filtered_args = {}
+            for key, value in args.items():
+                if key in allowed_params:
+                    filtered_args[key] = value
+                else:
+                    logger.debug(f"过滤掉不需要的参数: {key}")
+            
+            # 更新args为过滤后的参数
+            args.clear()
+            args.update(filtered_args)
+            
+            # 检查必需参数
+            missing_params = []
+            for param in required_params:
+                if param not in args:
+                    missing_params.append(param)
+            
+            if missing_params:
+                return f"缺少必需参数: {', '.join(missing_params)}。请提供完整的参数。"
+        
+        # 特殊验证和修复
+        if tool_name == "query_assets_by_status_mcp":
+            valid_search_types = [
+                "productUri", "productName", "assetNum", "memberAccount"
+            ]
+            if ("searchType" in args and 
+                args["searchType"] not in valid_search_types):
+                return f"searchType必须是: {', '.join(valid_search_types)} 中的一个"
+            
+            # 自动修复 assetStatus 格式
+            if "assetStatus" in args:
+                if isinstance(args["assetStatus"], str):
+                    # 如果是字符串，尝试转换为列表
+                    try:
+                        args["assetStatus"] = [args["assetStatus"]]
+                        logger.info(f"自动修复 assetStatus 格式: {args['assetStatus']}")
+                    except:
+                        return "assetStatus格式错误，应为状态字符串或状态列表"
+                elif not isinstance(args["assetStatus"], list):
+                    return "assetStatus必须是列表格式"
+        
+        # 分配资产权限工具的特殊验证
+        if tool_name == "allocate_asset_privileges_mcp":
+            valid_assign_types = ["assign", "unassign"]
+            if ("assignType" in args and 
+                args["assignType"] not in valid_assign_types):
+                return f"assignType必须是: {', '.join(valid_assign_types)} 中的一个"
+            
+            # 验证 assetPrivileges 格式
+            if "assetPrivileges" in args:
+                if not isinstance(args["assetPrivileges"], list):
+                    return "assetPrivileges必须是列表格式"
+                
+                for i, privilege in enumerate(args["assetPrivileges"]):
+                    if not isinstance(privilege, dict):
+                        return f"assetPrivileges[{i}]必须是字典格式"
+                    
+                    required_fields = ["assetNum", "assetId", "memberId"]
+                    for field in required_fields:
+                        if field not in privilege:
+                            return f"assetPrivileges[{i}]缺少必需字段: {field}"
+        
+        # 添加企业成员工具的特殊验证
+        if tool_name == "add_enterprise_member_mcp":
+            # 验证用户名格式
+            if "userName" in args:
+                username = args["userName"]
+                if not isinstance(username, str) or len(username) < 2 or len(username) > 30:
+                    return "userName长度必须在2-30个字符之间"
+                if not username.replace('_', '').isalnum():
+                    return "userName只能包含字母、数字和下划线"
+            
+            # 验证密码格式
+            if "password" in args:
+                password = args["password"]
+                if not isinstance(password, str) or len(password) < 8 or len(password) > 16:
+                    return "password长度必须在8-16个字符之间"
+                
+                # 检查密码复杂度
+                has_digit = any(c.isdigit() for c in password)
+                has_alpha = any(c.isalpha() for c in password)
+                has_symbol = any(not c.isalnum() for c in password)
+                
+                complexity_count = sum([has_digit, has_alpha, has_symbol])
+                if complexity_count < 2:
+                    return "password必须包含至少两种字符类型（数字、字母、符号）"
+        
+        # 令牌生成工具的验证
+        if tool_name in ["generate_client_token_mcp", "generate_user_token_mcp"]:
+            valid_grant_types = ["client_credentials", "uid"]
+            if ("grantType" in args and 
+                args["grantType"] not in valid_grant_types):
+                return f"grantType必须是: {', '.join(valid_grant_types)} 中的一个"
+        
+        # 智能参数补全
+        self._auto_complete_parameters(tool_name, args)
+        
+        return None
+
+    def _auto_complete_parameters(self, tool_name: str, args: Dict) -> None:
+        """智能参数补全"""
+        
+        # 为令牌生成工具设置默认值
+        if tool_name == "generate_client_token_mcp":
+            if "grantType" not in args:
+                args["grantType"] = "client_credentials"
+                logger.info("自动补全 grantType 为 'client_credentials'")
+        
+        if tool_name == "generate_user_token_mcp":
+            if "grantType" not in args:
+                args["grantType"] = "uid"
+                logger.info("自动补全 grantType 为 'uid'")
+        
+        # 为查询资产工具设置默认分页参数
+        if tool_name == "query_assets_by_status_mcp":
+            if "pageNum" not in args:
+                args["pageNum"] = 1
+                logger.debug("自动补全 pageNum 为 1")
+            if "pageSize" not in args:
+                args["pageSize"] = 20
+                logger.debug("自动补全 pageSize 为 20")
+            
+            # 智能推断搜索类型
+            if "searchType" not in args and "searchCondition" in args:
+                search_condition = str(args["searchCondition"]).lower()
+                if search_condition.startswith("asset") or "资产" in search_condition:
+                    args["searchType"] = "assetNum"
+                    logger.info("根据搜索条件自动推断 searchType 为 'assetNum'")
+                elif "@" in search_condition or "account" in search_condition:
+                    args["searchType"] = "memberAccount"
+                    logger.info("根据搜索条件自动推断 searchType 为 'memberAccount'")
+                elif "product" in search_condition or "产品" in search_condition:
+                    args["searchType"] = "productName"
+                    logger.info("根据搜索条件自动推断 searchType 为 'productName'")
+                else:
+                    args["searchType"] = "assetNum"  # 默认值
+                    logger.info("使用默认 searchType 'assetNum'")
+            
+            # 智能设置资产状态
+            if "assetStatus" not in args:
+                # 根据搜索条件推断状态
+                search_condition = str(args.get("searchCondition", "")).lower()
+                if "未分配" in search_condition or "unassigned" in search_condition:
+                    args["assetStatus"] = ["UNASSIGNED", "VALID"]
+                elif "已分配" in search_condition or "assigned" in search_condition:
+                    args["assetStatus"] = ["ASSIGNED"]
+                elif "过期" in search_condition or "expired" in search_condition:
+                    args["assetStatus"] = ["EXPIRED"]
+                else:
+                    args["assetStatus"] = ["VALID"]  # 默认查询有效资产
+                logger.info(f"自动推断 assetStatus 为 {args['assetStatus']}")
+        
+        # 为企业成员查询设置默认关键词
+        if tool_name == "query_enterprise_members_mcp":
+            if "keyword" not in args:
+                args["keyword"] = ""
+                logger.debug("自动补全 keyword 为空字符串")
+        
+        # 为资产续费工具设置默认开始时间
+        if tool_name == "renew_asset_product_mcp":
+            if "limitStartTime" not in args:
+                # 使用当前时间戳（毫秒）
+                import time
+                args["limitStartTime"] = int(time.time() * 1000)
+                logger.info(f"自动补全 limitStartTime 为当前时间: {args['limitStartTime']}")
+        
+        logger.debug(f"参数补全完成，最终参数: {args}")
 
     def _create_agent_executor(self) -> AgentExecutor:
         """每次请求动态创建新的AgentExecutor，保证并发安全"""
@@ -344,48 +572,62 @@ class AssetManageAgent:
             return optimized_steps
         except Exception as e:
             logger.error(f"LLM优化流式思考步骤失败: {str(e)}")
-            # 如果LLM优化失败，返回空列表
-            return []
+            # 如果LLM优化失败，生成简化的思考步骤
+            return self._generate_simple_thinking_steps(raw_steps)
 
     def _optimize_streaming_thinking_steps_with_llm(self, raw_steps) -> List[Dict[str, Any]]:
         """使用LLM优化流式思考步骤，生成更适合逐步展示的内容"""
+        
+        # 如果没有原始步骤，返回默认步骤
+        if not raw_steps:
+            return self._generate_default_thinking_steps()
         
         # 构建LLM提示
         steps_text = ""
         for i, step in enumerate(raw_steps, 1):
             steps_text += f"步骤{i}:\n"
-            steps_text += f"思考: {step['thought']}\n"
-            steps_text += f"执行: {step['tool']}\n"
-            steps_text += f"结果: {step['observation'][:200]}...\n\n"
+            steps_text += f"思考: {step['thought'][:300]}...\n"
+            steps_text += f"执行工具: {step['tool']}\n"
+            steps_text += f"执行结果: {step['observation'][:400]}...\n\n"
         
         prompt = f"""
-            请将以下AI助手的技术执行步骤转换为适合逐步展示的用户友好描述。
+            请将以下AI助手的资产管理执行步骤转换为用户友好的实时展示内容。
 
-            原始步骤:
+            原始执行步骤:
             {steps_text}
 
-            要求:
-            1. 每个步骤要有清晰的"正在做什么"和"处理结果"
-            2. 用自然、友好的语言，避免技术术语
-            3. 适合实时展示，让用户感受到处理进度
-            4. 每个步骤包含: 当前操作 + 处理状态 + 结果反馈
-            5. 保持简洁但信息完整
+            转换要求:
+            1. 每个步骤描述具体的业务操作（如：获取认证、查询资产、分析数据、分配权限等）
+            2. 用自然语言描述进度，让用户了解当前在做什么
+            3. 结果要具体，包含实际的数据信息（如找到多少资产、成员等）
+            4. 适合逐步实时展示，有明确的进度感
+            5. 避免技术术语，专注于业务含义
 
-            请按以下JSON格式返回:
+            请严格按以下JSON格式返回:
             [
             {{
-                "content": "正在查询您的资产信息...",
-                "status": "processing",
-                "result": "已找到8个资产记录",
+                "content": "正在获取访问权限和认证信息...",
+                "result": "认证成功，已获得系统访问权限",
                 "result_type": "success",
-                "progress": "1/3"
+                "progress": "1/4"
             }},
             {{
-                "content": "分析资产分配状态...", 
-                "status": "processing",
-                "result": "识别出3个未分配资产",
+                "content": "正在查询您的资产信息...",
+                "result": "已找到8个资产记录，包含3个未分配资产",
+                "result_type": "success", 
+                "progress": "2/4"
+            }},
+            {{
+                "content": "正在分析成员和权限分配策略...",
+                "result": "已识别目标成员，准备执行权限分配",
                 "result_type": "success",
-                "progress": "2/3"
+                "progress": "3/4"
+            }},
+            {{
+                "content": "正在执行资产权限分配操作...",
+                "result": "权限分配完成，操作执行成功",
+                "result_type": "success",
+                "progress": "4/4"
             }}
             ]
             """
@@ -432,7 +674,8 @@ class AssetManageAgent:
                 
         except Exception as e:
             logger.error(f"LLM优化流式思考步骤失败: {str(e)}")
-            raise e
+            # 如果LLM优化失败，使用备用方案
+            return self._generate_fallback_thinking_steps(raw_steps)
 
     def _optimize_thinking_steps_with_llm(self, raw_steps) -> List[Dict[str, Any]]:
         """使用LLM优化思考步骤，生成用户友好的描述"""
@@ -533,144 +776,7 @@ class AssetManageAgent:
         self._load_mcp_tools()
 
 
-# ---------------- HTTP 服务部分 ----------------
-try:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import JSONResponse
-    from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel
-    import uvicorn
-    FASTAPI_AVAILABLE = True
-except ImportError:
-    FASTAPI_AVAILABLE = False
-
-
-class ProcessRequestModel(BaseModel):
-    message: str
-    mcp_server_url: str = None
-
-
-_global_agent: Optional[AssetManageAgent] = None
-
-
-def get_agent(mcp_server_url: str = None) -> AssetManageAgent:
-    global _global_agent
-    if _global_agent is None:
-        _global_agent = AssetManageAgent(mcp_server_url)
-    return _global_agent
-
-
-def create_app() -> FastAPI:
-    app = FastAPI(title="智能资产管理Agent API", version="1.0.0")
-
-    # 添加CORS中间件支持跨域访问
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # 允许所有源，生产环境建议指定具体域名
-        allow_credentials=True,
-        allow_methods=["*"],  # 允许所有HTTP方法
-        allow_headers=["*"],  # 允许所有请求头
-    )
-
-    @app.post("/process")
-    async def process_request(request: ProcessRequestModel):
-        try:
-            agent = get_agent(request.mcp_server_url)
-            return {"success": True, "data": agent.process_request(request.message)}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail={"error": str(e)})
-    
-    @app.post("/process-stream")
-    async def process_request_stream(request: ProcessRequestModel):
-        """流式处理请求，实时返回思考步骤"""
-        from fastapi.responses import StreamingResponse
-        import asyncio
-        import json
-        
-        async def generate_thinking_stream():
-            try:
-                agent = get_agent(request.mcp_server_url)
-                
-                # 发送开始信号
-                yield f"data: {json.dumps({'type': 'start', 'message': '开始分析您的请求...'})}\n\n"
-                await asyncio.sleep(0.5)
-                
-                # 执行Agent处理
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, agent.process_request_with_streaming, request.message
-                )
-                
-                if result.get("success"):
-                    # 逐步发送思考步骤
-                    thinking_steps = result.get("thinking_steps", [])
-                    for i, step in enumerate(thinking_steps, 1):
-                        # 发送思考步骤
-                        yield f"data: {json.dumps({'type': 'thinking_step', 'step': i, 'data': step})}\n\n"
-                        await asyncio.sleep(0.8)  # 模拟处理时间
-                    
-                    # 发送最终结果
-                    final_result = {
-                        'type': 'final_result',
-                        'output': result.get("output", ""),
-                        'allocation_plan': result.get("allocation_plan", {}),
-                        'tools_used': result.get("tools_used", [])
-                    }
-                    yield f"data: {json.dumps(final_result)}\n\n"
-                else:
-                    # 发送错误信息
-                    yield f"data: {json.dumps({'type': 'error', 'message': result.get('message', '处理失败')})}\n\n"
-                
-                # 发送结束信号
-                yield f"data: {json.dumps({'type': 'end'})}\n\n"
-                
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': f'处理异常: {str(e)}'})}\n\n"
-        
-        return StreamingResponse(
-            generate_thinking_stream(),
-            media_type="text/plain",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*",
-            }
-        )
-
-    @app.get("/tools")
-    async def get_available_tools():
-        try:
-            agent = get_agent()
-            return {"success": True, "data": agent.get_available_tools()}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail={"error": str(e)})
-
-    @app.get("/status")
-    async def get_status():
-        """获取Agent状态"""
-        try:
-            agent = get_agent()
-            return {
-                "success": True, 
-                "data": {
-                    "status": "running",
-                    "mcp_server_url": agent.mcp_client.server_url,
-                    "tools_count": len(agent.get_available_tools()),
-                    "cors_enabled": True
-                }
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail={"error": str(e)})
-
-    return app
-
-
-def run_http_server(host="0.0.0.0", port=8001):
-    if not FASTAPI_AVAILABLE:
-        logger.error("FastAPI未安装，无法启动HTTP服务")
-        return
-    uvicorn.run(create_app(), host=host, port=port, log_level="info")
-
-
 if __name__ == "__main__":
-    run_http_server()
+    # 这里可以添加直接测试Agent的代码
+    agent = AssetManageAgent()
+    print("AssetManageAgent初始化完成，可用工具:", agent.get_available_tools())
