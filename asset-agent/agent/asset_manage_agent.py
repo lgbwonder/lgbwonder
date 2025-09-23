@@ -191,6 +191,14 @@ class AssetManageAgent:
             if not isinstance(args, dict):
                 return f"参数类型错误: {type(args)}。请使用JSON格式的参数。"
 
+            # 检查是否应该禁止调用令牌生成工具
+            if tool_name in ["generate_client_token_mcp", "generate_user_token_mcp"]:
+                # 检查是否有上下文信息表明已提供token
+                if hasattr(self, '_current_message') and self._current_message:
+                    if "系统提供的认证信息" in self._current_message:
+                        logger.warning(f"检测到系统已提供认证信息，拒绝调用 {tool_name}")
+                        return "系统已提供认证令牌，无需重新生成。请直接使用系统提供的userToken和clientToken。"
+
             # 参数验证和智能补全
             validation_error = self._validate_tool_parameters(tool_name, args)
             if validation_error:
@@ -404,6 +412,9 @@ class AssetManageAgent:
     def _auto_complete_parameters(self, tool_name: str, args: Dict, properties: Dict) -> None:
         """智能参数补全"""
         
+        # 首先尝试从当前消息中提取token
+        self._extract_tokens_from_message(args)
+        
         # 基于工具描述进行参数补全
         for param_name, param_info in properties.items():
             if param_name not in args:
@@ -476,6 +487,29 @@ class AssetManageAgent:
             logger.info(f"自动补全 limitStartTime 为当前时间: {args['limitStartTime']}")
         
         logger.debug(f"参数补全完成，最终参数: {args}")
+
+    def _extract_tokens_from_message(self, args: Dict) -> None:
+        """从当前消息中提取token并补全到参数中"""
+        if hasattr(self, '_current_message') and self._current_message:
+            import re
+            
+            # 提取userToken（匹配格式：- userToken: cn-xxx）
+            if "userToken" not in args:
+                user_token_match = re.search(r'-\s*userToken:\s*([^\s\n]+)', self._current_message)
+                if user_token_match:
+                    args["userToken"] = user_token_match.group(1)
+                    logger.info(f"从消息中提取并补全 userToken: {user_token_match.group(1)[:20]}...")
+                else:
+                    logger.warning("未能从消息中提取userToken")
+            
+            # 提取clientToken（匹配格式：- clientToken: cn-xxx）
+            if "clientToken" not in args:
+                client_token_match = re.search(r'-\s*clientToken:\s*([^\s\n]+)', self._current_message)
+                if client_token_match:
+                    args["clientToken"] = client_token_match.group(1)
+                    logger.info(f"从消息中提取并补全 clientToken: {client_token_match.group(1)[:20]}...")
+                else:
+                    logger.warning("未能从消息中提取clientToken")
 
     def _validate_parameter_types(self, args: Dict, properties: Dict) -> Optional[str]:
         """基于工具描述验证参数类型"""

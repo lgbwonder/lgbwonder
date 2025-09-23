@@ -1,8 +1,8 @@
 // 配置信息
 const CONFIG = {
     AGENT_API_BASE: 'http://localhost:8001',
-    DEFAULT_USER_TOKEN: 'cn-8cb357d5-93f6-4a4f-80df-482271c87ee8',
-    DEFAULT_CLIENT_TOKEN: 'cn-1e522f6f-ff6e-4384-be68-e35c302c786c',
+    DEFAULT_USER_TOKEN: 'cn-6ab3b544-4957-48b1-a251-c8e575c8dd41',
+    DEFAULT_CLIENT_TOKEN: 'cn-5cf15cb2-58bf-4a07-8ddd-0e2259f95679',
     REQUEST_TIMEOUT: 5 * 60 * 1000, // 5分钟
     TYPING_SPEED: 50, // 打字机效果速度（毫秒）
     THINKING_DELAY: 1000, // 思考延时（毫秒）

@@ -224,6 +224,7 @@ class IntelligentAgentServer:
             async def generate_response_stream():
                 try:
                     # 记录接收到的token信息
+                    logger.info(f"请求头token检查: userToken={user_token}, clientToken={client_token}")
                     if user_token and client_token:
                         logger.info(f"从请求头获取到认证token: userToken={user_token[:20]}..., clientToken={client_token[:20]}...")
                     else:
