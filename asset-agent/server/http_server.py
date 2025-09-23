@@ -13,7 +13,7 @@ from datetime import datetime
 
 # FastAPI相关导入
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Header
     from fastapi.responses import JSONResponse, StreamingResponse
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
@@ -214,11 +214,21 @@ class IntelligentAgentServer:
                 raise HTTPException(status_code=500, detail={"error": str(e)})
 
         @app.post("/process-stream")
-        async def process_request_stream(request: ProcessRequestModel):
+        async def process_request_stream(
+            request: ProcessRequestModel,
+            user_token: str = Header(None, alias="userToken"),
+            client_token: str = Header(None, alias="clientToken")
+        ):
             """流式处理请求 - 智能路由"""
             
             async def generate_response_stream():
                 try:
+                    # 记录接收到的token信息
+                    if user_token and client_token:
+                        logger.info(f"从请求头获取到认证token: userToken={user_token[:20]}..., clientToken={client_token[:20]}...")
+                    else:
+                        logger.warning(f"请求头中缺少认证token: userToken={'有' if user_token else '无'}, clientToken={'有' if client_token else '无'}")
+                    
                     # 发送开始信号
                     yield f"data: {json.dumps({'type': 'start', 'message': '正在分析您的请求...'}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.5)
@@ -237,11 +247,11 @@ class IntelligentAgentServer:
                     
                     if agent_type == 'asset':
                         # 使用资产管理Agent进行流式处理
-                        async for chunk in self._process_asset_stream(request):
+                        async for chunk in self._process_asset_stream(request, user_token, client_token):
                             yield chunk
                     else:
                         # 使用知识库Agent进行流式处理
-                        async for chunk in self._process_knowledge_stream(request):
+                        async for chunk in self._process_knowledge_stream(request, user_token, client_token):
                             yield chunk
                     
                     # 发送结束信号
@@ -305,14 +315,14 @@ class IntelligentAgentServer:
             except Exception as e:
                 raise HTTPException(status_code=500, detail={"error": str(e)})
 
-    async def _process_asset_stream(self, request: ProcessRequestModel):
+    async def _process_asset_stream(self, request: ProcessRequestModel, user_token: str = None, client_token: str = None):
         """处理资产管理Agent的流式响应"""
         try:
             agent = self.router.get_asset_agent(request.mcp_server_url)
             
-            # 执行资产管理处理
+            # 执行资产管理处理，传递token
             result = await asyncio.get_event_loop().run_in_executor(
-                None, agent.process_request_with_streaming, request.message
+                None, agent.process_request_with_streaming, request.message, user_token, client_token
             )
             
             if result.get("success"):
@@ -347,7 +357,7 @@ class IntelligentAgentServer:
             error_data = {'type': 'error', 'message': f'资产管理Agent异常: {str(e)}'}
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 
-    async def _process_knowledge_stream(self, request: ProcessRequestModel):
+    async def _process_knowledge_stream(self, request: ProcessRequestModel, user_token: str = None, client_token: str = None):
         """处理知识库Agent的流式响应"""
         try:
             agent = self.router.get_knowledge_agent()

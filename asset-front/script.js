@@ -427,7 +427,9 @@ async function handleLayeredRequest(fullMessage, controller) {
         const response = await fetch(`${CONFIG.AGENT_API_BASE}/process-stream`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'userToken': CONFIG.DEFAULT_USER_TOKEN,
+                'clientToken': CONFIG.DEFAULT_CLIENT_TOKEN
             },
             body: JSON.stringify({
                 message: fullMessage
