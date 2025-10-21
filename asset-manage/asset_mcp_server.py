@@ -503,9 +503,7 @@ def query_enterprise_members_mcp(userToken: str, clientToken: str, keyword: str 
         return {"success": False, "error": error_msg, "type": "unknown_error"}
 
 @mcp.tool()
-def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name: str,
-                              departmentId: int = None, remark: str = None,
-                              passwordMobile: str = None, regionCode: str = None) -> dict:
+def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name: str) -> dict:
     """添加用户中心成员 - 成功时返回的ID并非授权成员ID
 
     Args:
@@ -513,10 +511,6 @@ def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name
         userName (str): 账号名称，只能包含字母和数字，长度2-30个字符
         password (str): 初始密码，8-16个字符，必须包含至少两种字符类型（数字、字母、符号）
         name (str): 用户全名，最多30个字符
-        departmentId (int, optional): 部门ID，可选
-        remark (str, optional): 备注信息，最多200个字符，可选
-        passwordMobile (str, optional): 安全手机号，用于密码找回，可选
-        regionCode (str, optional): 安全手机号的区域代码，仅国际站点有效，可选
 
     Returns:
         dict: API原始响应数据
@@ -559,23 +553,15 @@ def add_enterprise_member_mcp(userToken: str, userName: str, password: str, name
         data = {
             "userName": userName,
             "password": password,
-            "name": name
+            "name": name,
         }
-
-        # 添加可选参数
-        if departmentId is not None:
-            data["departmentId"] = departmentId
-        if remark is not None:
-            data["remark"] = remark
-        if passwordMobile is not None:
-            data["passwordMobile"] = passwordMobile
-        if regionCode is not None:
-            data["regionCode"] = regionCode
 
         logger.info(f"添加企业成员 - 用户名:{userName}, 姓名:{name}")
 
         # 发送请求
         resp = requests.post(MEMBER_ADD_URL, data=data, headers=headers, timeout=30)
+
+        logger.error(resp.json())
 
         # 检查响应状态
         if resp.status_code == 200:

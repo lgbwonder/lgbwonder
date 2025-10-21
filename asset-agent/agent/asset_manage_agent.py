@@ -7,8 +7,10 @@
 import os
 import json
 import logging
+import re
 from datetime import datetime
-from typing import Dict, List, Any, Optional, TypedDict
+from typing import Dict, List, Any, Optional, TypedDict, Tuple
+from dataclasses import dataclass
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_react_agent, AgentExecutor
@@ -28,6 +30,68 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# ==================== 常量定义 ====================
+@dataclass
+class LLMConfig:
+    """LLM配置常量"""
+    DEFAULT_MODEL: str = "qwen-plus"
+    DEFAULT_TEMPERATURE: float = 0.0
+    DEFAULT_TIMEOUT: int = 60
+    DEFAULT_MAX_RETRIES: int = 5
+    DEFAULT_MAX_TOKENS: int = 3000
+    
+    OPTIMIZER_TEMPERATURE: float = 0.2
+    OPTIMIZER_TIMEOUT: int = 15
+    OPTIMIZER_MAX_TOKENS: int = 800
+    
+    STREAMING_TEMPERATURE: float = 0.2
+    STREAMING_TIMEOUT: int = 20
+    STREAMING_MAX_TOKENS: int = 1000
+    
+    SIMPLIFY_TEMPERATURE: float = 0.2
+    SIMPLIFY_TIMEOUT: int = 10
+    SIMPLIFY_MAX_TOKENS: int = 300
+    
+    COMPLETION_TEMPERATURE: float = 0.1
+    COMPLETION_TIMEOUT: int = 15
+    COMPLETION_MAX_TOKENS: int = 500
+
+
+@dataclass
+class AgentConfig:
+    """Agent配置常量"""
+    MAX_ITERATIONS: int = 15
+    MAX_EXECUTION_TIME: int = 300
+    EARLY_STOPPING_METHOD: str = "generate"
+
+
+@dataclass
+class ValidationConfig:
+    """参数验证配置常量"""
+    USERNAME_MIN_LENGTH: int = 2
+    USERNAME_MAX_LENGTH: int = 30
+    PASSWORD_MIN_LENGTH: int = 8
+    PASSWORD_MAX_LENGTH: int = 16
+    MAX_TIMESTAMP: int = 4102444800000  # 2100年的毫秒时间戳
+    MAX_PAGE_SIZE: int = 1000
+    DEFAULT_PAGE_NUM: int = 1
+    DEFAULT_PAGE_SIZE: int = 20
+
+
+# JSON类型映射
+TYPE_MAPPING = {
+    'str': 'string',
+    'int': 'integer',
+    'float': 'number',
+    'bool': 'boolean',
+    'list': 'array',
+    'dict': 'object'
+}
+
+# 工具参数Schema字段名候选
+SCHEMA_FIELD_NAMES = ["inputSchema", "parameters", "schema", "input_schema", "args_schema"]
+
+
 class AssetAllocationState(TypedDict):
     """资产分配状态"""
     messages: List[Any]
@@ -45,39 +109,69 @@ class AssetManageAgent:
     """智能资产管理Agent - 基于ReAct模式（优化并发安全）"""
 
     def __init__(self, mcp_server_url: str = None):
-        if mcp_server_url is None:
-            mcp_server_url = os.getenv("MCP_SERVER_URL")
-
-        self.mcp_client = MCPClient(mcp_server_url)
-
-        # 配置LLM
-        model = os.getenv("QWEN_MODEL", "qwen-plus")
-        temperature = float(os.getenv("QWEN_TEMPERATURE", "0"))
-        api_key = os.getenv("QWEN_API_KEY", "sk-8fe5cd468cd241d2b7fd2849468bcfde")
-        base_url = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-
-        if not api_key:
-            logger.warning("QWEN_API_KEY 环境变量未设置，LLM功能可能无法正常工作")
-
-        self.llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-            api_key=api_key,
-            base_url=base_url,
-            timeout=30,
-            max_retries=3,         # 提高重试次数，避免一次失败就终止
-            request_timeout=30,
-            max_tokens=2000        # 增大输出限制，支持长结果
-        )
-
-        # 缓存工具
+        """初始化Agent
+        
+        Args:
+            mcp_server_url: MCP服务器URL，如果为None则从环境变量读取
+        """
+        # 初始化MCP客户端
+        self.mcp_client = MCPClient(mcp_server_url or os.getenv("MCP_SERVER_URL"))
+        
+        # 初始化配置
+        self.llm_config = LLMConfig()
+        self.agent_config = AgentConfig()
+        self.validation_config = ValidationConfig()
+        
+        # 配置并初始化LLM
+        self.llm = self._initialize_llm()
+        
+        # 缓存工具和提示模板
         self.tools: List[Tool] = []
         self._load_mcp_tools()
-
-        # 缓存Agent提示模板
         self._prompt = self._build_prompt()
+        
+        logger.info(f"Agent初始化完成，加载了 {len(self.tools)} 个工具")
 
-        logger.debug(f"Agent初始化完成，MCP服务器: {mcp_server_url}")
+    def _initialize_llm(self) -> ChatOpenAI:
+        """初始化主LLM实例
+        
+        Returns:
+            配置好的ChatOpenAI实例
+        """
+        api_key = os.getenv("QWEN_API_KEY", "sk-8fe5cd468cd241d2b7fd2849468bcfde")
+        if not api_key:
+            logger.warning("QWEN_API_KEY 环境变量未设置，LLM功能可能无法正常工作")
+        
+        return ChatOpenAI(
+            model=os.getenv("QWEN_MODEL", self.llm_config.DEFAULT_MODEL),
+            temperature=float(os.getenv("QWEN_TEMPERATURE", str(self.llm_config.DEFAULT_TEMPERATURE))),
+            api_key=api_key,
+            base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            timeout=self.llm_config.DEFAULT_TIMEOUT,
+            max_retries=self.llm_config.DEFAULT_MAX_RETRIES,
+            request_timeout=self.llm_config.DEFAULT_TIMEOUT,
+            max_tokens=self.llm_config.DEFAULT_MAX_TOKENS
+        )
+    
+    def _create_llm_instance(self, temperature: float, max_tokens: int, timeout: int) -> ChatOpenAI:
+        """创建LLM实例的工厂方法
+        
+        Args:
+            temperature: 温度参数
+            max_tokens: 最大token数
+            timeout: 超时时间
+            
+        Returns:
+            配置好的ChatOpenAI实例
+        """
+        return ChatOpenAI(
+            model=self.llm.model_name,
+            api_key=self.llm.openai_api_key,
+            base_url=self.llm.openai_api_base,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout
+        )
 
     def _build_prompt(self) -> PromptTemplate:
         """构建提示模板"""
@@ -104,8 +198,8 @@ class AssetManageAgent:
                 第一步：确定用户是通过用户名查询已分配有效资产
                 第二步：确认参数searchType=memberAccount，searchCondition=张三，assetStatus=[VALID,ASSIGNED]
                 第三步：查询资产状态 query_assets_by_status_mcp 进行查询
-            2、给张三分配一个包含计价产品的资产    
-                第一步：查询用户名为张三的授权成员，使用工具query_enterprise_members_mcp
+            2、给张三001分配一个包含计价产品的资产    
+                第一步：查询用户名为张三001的授权成员，使用工具query_enterprise_members_mcp,searchType=memberAccount，searchCondition=张三001
                 第二步：查询有效且未分配并且包含计价产品的资产，使用工具query_assets_by_status_mcp
                 第三步：给张三分配资产，使用工具allocate_asset_privileges_mcp
             3、创建账号并分配资产的完整流程（重要！）
@@ -115,7 +209,7 @@ class AssetManageAgent:
                 第四步：为新创建的成员分配找到的资产，使用工具allocate_asset_privileges_mcp
 
             自然语言理解指南:
-            - "创建账号XXX" → userName="XXX", name="XXX" 
+            - "创建账号XXX" → userName="XXX", name="XXX"，不变更用户输入 
             - "密码为XXX" → password="XXX"
             - "密保手机为XXX" → passwordMobile="XXX"
             - "查询未分配资产" → assetStatus=["UNASSIGNED", "VALID"]
@@ -148,13 +242,15 @@ class AssetManageAgent:
             - Action Input必须是有效JSON，数组用[]，字符串用""
             - 示例: {{"userToken": "令牌", "assetStatus": ["UNASSIGNED", "VALID"]}}
             - 必须完成完整流程，不要在中途停止
-            - 每个步骤都要检查结果是否成功
+            - 每个步骤都要检查结果是否成功，如果失败要分析原因
             - 从用户自然语言中智能提取参数信息
             - mcp工具调用时参数类型、参数个数严格按照接口描述进行传递
             - 新成员的 globalId 不为 memberId
             - 禁止调用: 如果用户输入中包含"系统提供的认证信息"，说明已有token，严禁调用generate_client_token_mcp和generate_user_token_mcp
             - 复合任务必须按顺序执行: 创建账号→查询成员→查询资产→分配权限
             - 查询产品时使用完整产品名称作为searchCondition，例如"广联达云计价平台概算GEB"
+            - 高效执行: 工具调用成功后立即进行下一步，避免重复或不必要的验证
+            - 错误处理: 如果工具调用失败，分析错误原因并尝试修正参数后重试
             {agent_scratchpad}
         """)
 
@@ -216,7 +312,7 @@ class AssetManageAgent:
                 logger.warning(f"参数验证失败: {validation_error}")
                 return f"参数验证失败: {validation_error}"
 
-            logger.info(f"调用MCP工具: {tool_name}")
+            logger.info(f"调用MCP工具: {tool_name, args}")
             result = self.mcp_client.call_tool(tool_name, args)
 
             if result.get("success"):
@@ -346,14 +442,18 @@ class AssetManageAgent:
             return None
 
     def _generate_schema_from_description(self, tool: Dict) -> Optional[Dict]:
-        """从工具描述生成参数描述"""
+        """从工具描述生成参数描述
+        
+        Args:
+            tool: 工具信息字典
+            
+        Returns:
+            生成的参数schema，失败返回None
+        """
         try:
             description = tool.get("description", "")
             if not description:
                 return None
-            
-            # 解析工具描述中的参数信息
-            import re
             
             # 查找Args部分
             args_match = re.search(r'Args:\s*(.*?)(?:\n\n|\nReturns:|\nNote:|\Z)', description, re.DOTALL)
@@ -373,50 +473,7 @@ class AssetManageAgent:
             required = []
             
             for param_name, param_type, param_desc in matches:
-                # 解析参数类型
-                type_mapping = {
-                    'str': 'string',
-                    'int': 'integer', 
-                    'float': 'number',
-                    'bool': 'boolean',
-                    'list': 'array',
-                    'dict': 'object'
-                }
-                
-                # 提取基础类型
-                base_type = param_type.split(',')[0].strip()
-                if 'optional' in param_type.lower():
-                    is_optional = True
-                else:
-                    is_optional = False
-                    required.append(param_name)
-                
-                # 转换类型
-                json_type = type_mapping.get(base_type, 'string')
-                
-                param_info = {
-                    "type": json_type,
-                    "description": param_desc.strip()
-                }
-                
-                # 添加默认值（如果有）
-                default_match = re.search(r'默认为(\d+|"[^"]*")', param_desc)
-                if default_match:
-                    default_val = default_match.group(1)
-                    if default_val.startswith('"'):
-                        param_info["default"] = default_val.strip('"')
-                    elif default_val.isdigit():
-                        param_info["default"] = int(default_val)
-                
-                # 添加枚举值（如果有）
-                enum_match = re.search(r'可选值[：:]([^。\n]+)', param_desc)
-                if enum_match:
-                    enum_text = enum_match.group(1)
-                    # 提取枚举值
-                    enum_values = re.findall(r'["\']([^"\']+)["\']|(\w+)', enum_text)
-                    if enum_values:
-                        param_info["enum"] = [val[0] or val[1] for val in enum_values if val[0] or val[1]]
-                
+                param_info = self._parse_parameter_info(param_name, param_type, param_desc, required)
                 properties[param_name] = param_info
             
             schema = {
@@ -431,85 +488,240 @@ class AssetManageAgent:
         except Exception as e:
             logger.error(f"从描述生成参数描述失败: {str(e)}")
             return None
+    
+    def _parse_parameter_info(self, param_name: str, param_type: str, param_desc: str, required: List[str]) -> Dict:
+        """解析单个参数的信息
+        
+        Args:
+            param_name: 参数名
+            param_type: 参数类型字符串
+            param_desc: 参数描述
+            required: 必需参数列表（会被修改）
+            
+        Returns:
+            参数信息字典
+        """
+        # 提取基础类型
+        base_type = param_type.split(',')[0].strip()
+        if 'optional' not in param_type.lower():
+            required.append(param_name)
+        
+        # 转换类型
+        json_type = TYPE_MAPPING.get(base_type, 'string')
+        
+        param_info = {
+            "type": json_type,
+            "description": param_desc.strip()
+        }
+        
+        # 添加默认值（如果有）
+        default_match = re.search(r'默认为(\d+|"[^"]*")', param_desc)
+        if default_match:
+            default_val = default_match.group(1)
+            param_info["default"] = (
+                default_val.strip('"') if default_val.startswith('"') 
+                else int(default_val) if default_val.isdigit() 
+                else default_val
+            )
+        
+        # 添加枚举值（如果有）
+        enum_match = re.search(r'可选值[：:]([^。\n]+)', param_desc)
+        if enum_match:
+            enum_text = enum_match.group(1)
+            enum_values = re.findall(r'["\']([^"\']+)["\']|(\w+)', enum_text)
+            if enum_values:
+                param_info["enum"] = [val[0] or val[1] for val in enum_values if val[0] or val[1]]
+        
+        return param_info
 
     def _auto_complete_parameters(self, tool_name: str, args: Dict, properties: Dict) -> None:
-        """智能参数补全"""
+        """通过LLM智能补全缺失参数
         
+        Args:
+            tool_name: 工具名称
+            args: 参数字典（会被修改）
+            properties: 参数属性定义
+        """
         # 首先尝试从当前消息中提取token（基于工具参数要求）
         self._extract_tokens_from_message(args, properties)
         
-        # 基于工具描述进行参数补全
-        for param_name, param_info in properties.items():
-            if param_name not in args:
-                # 获取参数的默认值
-                default_value = param_info.get("default")
-                if default_value is not None:
-                    args[param_name] = default_value
-                    logger.info(f"从工具描述自动补全 {param_name} 为默认值: {default_value}")
-                    continue
-                
-                # 基于参数类型和名称进行智能补全
-                param_type = param_info.get("type", "")
-                
-                # 智能补全常见参数
-                if param_name == "grantType":
-                    if tool_name == "generate_client_token_mcp":
-                        args[param_name] = "client_credentials"
-                        logger.info("自动补全 grantType 为 'client_credentials'")
-                    elif tool_name == "generate_user_token_mcp":
-                        args[param_name] = "uid"
-                        logger.info("自动补全 grantType 为 'uid'")
-                
-                elif param_name == "pageNum" and param_type == "integer":
-                    args[param_name] = 1
-                    logger.debug("自动补全 pageNum 为 1")
-                
-                elif param_name == "pageSize" and param_type == "integer":
-                    args[param_name] = 20
-                    logger.debug("自动补全 pageSize 为 20")
-                
-                elif param_name == "keyword" and param_type == "string":
-                    args[param_name] = ""
-                    logger.debug("自动补全 keyword 为空字符串")
+        # 基于工具描述进行基础参数补全
+        self._apply_basic_parameter_completion(tool_name, args, properties)
         
-        # 特殊的智能推断逻辑
-        if tool_name == "query_assets_by_status_mcp":
-            # 智能推断搜索类型
-            if "searchType" not in args and "searchCondition" in args:
-                search_condition = str(args["searchCondition"]).lower()
-                if search_condition.startswith("asset") or "资产" in search_condition:
-                    args["searchType"] = "assetNum"
-                    logger.info("根据搜索条件自动推断 searchType 为 'assetNum'")
-                elif "@" in search_condition or "account" in search_condition:
-                    args["searchType"] = "memberAccount"
-                    logger.info("根据搜索条件自动推断 searchType 为 'memberAccount'")
-                elif "product" in search_condition or "产品" in search_condition:
-                    args["searchType"] = "productName"
-                    logger.info("根据搜索条件自动推断 searchType 为 'productName'")
-                else:
-                    args["searchType"] = "assetNum"  # 默认值
-                    logger.info("使用默认 searchType 'assetNum'")
-            
-            # 智能设置资产状态
-            if "assetStatus" not in args:
-                search_condition = str(args.get("searchCondition", "")).lower()
-                if "未分配" in search_condition or "unassigned" in search_condition:
-                    args["assetStatus"] = ["UNASSIGNED", "VALID"]
-                elif "已分配" in search_condition or "assigned" in search_condition:
-                    args["assetStatus"] = ["ASSIGNED"]
-                elif "过期" in search_condition or "expired" in search_condition:
-                    args["assetStatus"] = ["EXPIRED"]
-                else:
-                    args["assetStatus"] = ["VALID"]  # 默认查询有效资产
-                logger.info(f"自动推断 assetStatus 为 {args['assetStatus']}")
-        
-        # 为资产续费工具设置默认开始时间
-        if tool_name == "renew_asset_product_mcp" and "limitStartTime" not in args:
-            import time
-            args["limitStartTime"] = int(time.time() * 1000)
-            logger.info(f"自动补全 limitStartTime 为当前时间: {args['limitStartTime']}")
+        # 使用LLM智能补全复杂参数
+        missing_params = [param for param in properties.keys() if param not in args]
+        if missing_params and hasattr(self, '_current_message') and self._current_message:
+            llm_completed_params = self._llm_complete_parameters(tool_name, args, missing_params, properties)
+            if llm_completed_params:
+                args.update(llm_completed_params)
         
         logger.debug(f"参数补全完成，最终参数: {args}")
+    
+    def _apply_basic_parameter_completion(self, tool_name: str, args: Dict, properties: Dict) -> None:
+        """应用基础参数补全规则
+        
+        Args:
+            tool_name: 工具名称
+            args: 参数字典（会被修改）
+            properties: 参数属性定义
+        """
+        for param_name, param_info in properties.items():
+            if param_name in args:
+                continue
+            
+            # 获取参数的默认值
+            default_value = param_info.get("default")
+            if default_value is not None:
+                args[param_name] = default_value
+                logger.info(f"从工具描述自动补全 {param_name} 为默认值: {default_value}")
+                continue
+            
+            # 基础参数补全
+            param_type = param_info.get("type", "")
+            completed_value = self._get_default_param_value(tool_name, param_name, param_type)
+            if completed_value is not None:
+                args[param_name] = completed_value
+                logger.info(f"基础参数补全 {param_name}: {completed_value}")
+    
+    def _get_default_param_value(self, tool_name: str, param_name: str, param_type: str) -> Any:
+        """获取参数的默认值
+        
+        Args:
+            tool_name: 工具名称
+            param_name: 参数名称
+            param_type: 参数类型
+            
+        Returns:
+            默认值，如果没有返回None
+        """
+        if param_name == "grantType":
+            if tool_name == "generate_client_token_mcp":
+                return "client_credentials"
+            elif tool_name == "generate_user_token_mcp":
+                return "uid"
+        elif param_name == "pageNum" and param_type == "integer":
+            return self.validation_config.DEFAULT_PAGE_NUM
+        elif param_name == "pageSize" and param_type == "integer":
+            return self.validation_config.DEFAULT_PAGE_SIZE
+        elif param_name == "keyword" and param_type == "string":
+            return ""
+        
+        return None
+
+    def _llm_complete_parameters(self, tool_name: str, existing_args: Dict, missing_params: List[str], properties: Dict) -> Dict:
+        """使用LLM智能补全缺失的参数"""
+        try:
+            # 构建参数描述
+            param_descriptions = []
+            for param in missing_params:
+                param_info = properties.get(param, {})
+                param_type = param_info.get("type", "unknown")
+                param_desc = param_info.get("description", "")
+                enum_values = param_info.get("enum", [])
+                
+                desc_text = f"- {param} ({param_type}): {param_desc}"
+                if enum_values:
+                    desc_text += f" 可选值: {enum_values}"
+                param_descriptions.append(desc_text)
+            
+            # 构建LLM提示
+            prompt = f"""
+                基于用户的原始请求，为工具 {tool_name} 智能补全缺失的参数。
+
+                用户原始请求:
+                {self._current_message}
+
+                工具已有参数:
+                {existing_args}
+
+                需要补全的参数:
+                {chr(10).join(param_descriptions)}
+
+                请根据用户请求的语义理解，智能推断这些参数的值。
+
+                参数补全规则:
+                1. searchType参数推断:
+                - 如果用户提到具体用户名/账号，使用 "memberAccount"
+                - 如果用户提到产品名称/软件名称，使用 "productName" 
+                - 如果用户提到资产编号，使用 "assetNum"
+                - 如果用户提到产品URI，使用 "productUri"
+
+                2. assetStatus参数推断:
+                - 用户要分配资产时，查询 ["UNASSIGNED", "VALID"] (未分配的有效资产)
+                - 用户查询已分配资产时，使用 ["ASSIGNED", "VALID"]
+                - 没有明确指定时，默认使用 ["VALID"]
+
+                3. searchCondition参数推断:
+                - 提取用户请求中的具体关键词
+                - 产品名称要使用完整名称，如"广联达云计价平台概算GEB"
+                - 用户名要使用具体的用户名
+                
+                4、password参数推断: 
+                - 初始密码，8-16个字符，必须包含至少两种字符类型（数字、字母、符号），不指定时随机生成
+                
+                5、可选入参字段，用户无明确说明时，不进行处理（严格执行）
+                 
+                示例：创建成员白玉亮003并为该成员分配一个包含云计价产品的资产
+                {"name": "白玉亮003","userName":"白玉亮003","searchCondition":"白玉亮003"} 
+                 
+                请严格按照以下JSON格式返回，不要添加任何其他文字:
+                {{
+                "参数名": "参数值"
+                }}
+
+                如果无法确定某个参数的值，请省略该参数。
+                """
+            
+            # 创建LLM实例进行参数补全
+            completion_llm = self._create_llm_instance(
+                temperature=self.llm_config.COMPLETION_TEMPERATURE,
+                max_tokens=self.llm_config.COMPLETION_MAX_TOKENS,
+                timeout=self.llm_config.COMPLETION_TIMEOUT
+            )
+            
+            response = completion_llm.invoke(prompt)
+            logger.debug(f"LLM参数补全返回: {response.content}")
+            
+            # 尝试提取JSON
+            json_match = re.search(r'\{[^}]*\}', response.content, re.DOTALL)
+
+            if json_match:
+                completed_params = json.loads(json_match.group())
+                
+                # 验证参数类型
+                validated_params = {}
+                for param_name, param_value in completed_params.items():
+                    if param_name in missing_params:
+                        param_info = properties.get(param_name, {})
+                        param_type = param_info.get("type", "")
+                        
+                        # 类型转换和验证
+                        try:
+                            if param_type == "array" and not isinstance(param_value, list):
+                                if isinstance(param_value, str):
+                                    validated_params[param_name] = [param_value]
+                                else:
+                                    validated_params[param_name] = param_value
+                            elif param_type == "integer" and not isinstance(param_value, int):
+                                validated_params[param_name] = int(param_value)
+                            elif param_type == "string" and not isinstance(param_value, str):
+                                validated_params[param_name] = str(param_value)
+                            else:
+                                validated_params[param_name] = param_value
+                                
+                            logger.info(f"LLM智能补全参数 {param_name}: {validated_params[param_name]}")
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"LLM补全参数 {param_name} 类型转换失败: {e}")
+                            continue
+                
+                return validated_params
+            else:
+                logger.warning("LLM返回格式不正确，无法解析参数补全结果")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"LLM参数补全失败: {str(e)}")
+            return {}
 
     def _extract_tokens_from_message(self, args: Dict, properties: Dict) -> None:
         """从当前消息中提取token并补全到参数中（仅当工具需要时）"""
@@ -675,107 +887,166 @@ class AssetManageAgent:
         return None
 
     def _apply_business_validation(self, tool_name: str, param_name: str, param_value: Any, param_info: Dict) -> Optional[str]:
-        """应用业务逻辑验证规则"""
+        """应用业务逻辑验证规则
         
-        # 基于参数名称的业务验证
-        if param_name == "userName" and isinstance(param_value, str):
-            # 用户名验证规则
-            if len(param_value) < 2 or len(param_value) > 30:
-                return f"用户名长度必须在2-30个字符之间，当前长度: {len(param_value)}"
-            if not param_value.replace('_', '').replace('-', '').isalnum():
-                return f"用户名只能包含字母、数字、下划线和连字符: {param_value}"
-        
-        elif param_name == "password" and isinstance(param_value, str):
-            # 密码复杂度验证
-            if len(param_value) < 8 or len(param_value) > 16:
-                return f"密码长度必须在8-16个字符之间，当前长度: {len(param_value)}"
+        Args:
+            tool_name: 工具名称
+            param_name: 参数名
+            param_value: 参数值
+            param_info: 参数信息
             
-            # 检查密码复杂度
-            has_digit = any(c.isdigit() for c in param_value)
-            has_alpha = any(c.isalpha() for c in param_value)
-            has_symbol = any(not c.isalnum() for c in param_value)
-            
-            complexity_count = sum([has_digit, has_alpha, has_symbol])
-            if complexity_count < 2:
-                return "密码必须包含至少两种字符类型（数字、字母、符号）"
+        Returns:
+            错误信息，如果验证通过返回None
+        """
+        validators = {
+            "userName": self._validate_username,
+            "password": self._validate_password,
+            "email": self._validate_email,
+            "phone": self._validate_phone,
+        }
         
-        elif param_name == "email" and isinstance(param_value, str):
-            # 邮箱格式验证
-            import re
-            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-            if not re.match(email_pattern, param_value):
-                return f"邮箱格式不正确: {param_value}"
+        # 特定参数验证
+        validator = validators.get(param_name)
+        if validator and isinstance(param_value, str):
+            return validator(param_value)
         
-        elif param_name == "phone" and isinstance(param_value, str):
-            # 手机号格式验证
-            import re
-            phone_pattern = r'^1[3-9]\d{9}$'
-            if not re.match(phone_pattern, param_value):
-                return f"手机号格式不正确: {param_value}"
+        # 时间戳验证
+        if param_name.endswith("Time") and isinstance(param_value, (int, float)):
+            return self._validate_timestamp(param_value)
         
-        elif param_name.endswith("Time") and isinstance(param_value, (int, float)):
-            # 时间戳验证
-            if param_value < 0:
-                return f"时间戳不能为负数: {param_value}"
-            # 检查是否为合理的时间戳范围（1970-2100年）
-            if param_value < 0 or param_value > 4102444800000:  # 2100年的毫秒时间戳
-                return f"时间戳超出合理范围: {param_value}"
+        return None
+    
+    def _validate_username(self, username: str) -> Optional[str]:
+        """验证用户名"""
+        if not (self.validation_config.USERNAME_MIN_LENGTH <= len(username) <= self.validation_config.USERNAME_MAX_LENGTH):
+            return f"用户名长度必须在{self.validation_config.USERNAME_MIN_LENGTH}-{self.validation_config.USERNAME_MAX_LENGTH}个字符之间，当前长度: {len(username)}"
+        if not username.replace('_', '').replace('-', '').isalnum():
+            return f"用户名只能包含字母、数字、下划线和连字符: {username}"
+        return None
+    
+    def _validate_password(self, password: str) -> Optional[str]:
+        """验证密码"""
+        if not (self.validation_config.PASSWORD_MIN_LENGTH <= len(password) <= self.validation_config.PASSWORD_MAX_LENGTH):
+            return f"密码长度必须在{self.validation_config.PASSWORD_MIN_LENGTH}-{self.validation_config.PASSWORD_MAX_LENGTH}个字符之间，当前长度: {len(password)}"
         
+        # 检查密码复杂度
+        has_digit = any(c.isdigit() for c in password)
+        has_alpha = any(c.isalpha() for c in password)
+        has_symbol = any(not c.isalnum() for c in password)
+        
+        if sum([has_digit, has_alpha, has_symbol]) < 2:
+            return "密码必须包含至少两种字符类型（数字、字母、符号）"
+        return None
+    
+    def _validate_email(self, email: str) -> Optional[str]:
+        """验证邮箱格式"""
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            return f"邮箱格式不正确: {email}"
+        return None
+    
+    def _validate_phone(self, phone: str) -> Optional[str]:
+        """验证手机号格式"""
+        phone_pattern = r'^1[3-9]\d{9}$'
+        if not re.match(phone_pattern, phone):
+            return f"手机号格式不正确: {phone}"
+        return None
+    
+    def _validate_timestamp(self, timestamp: float) -> Optional[str]:
+        """验证时间戳"""
+        if timestamp < 0:
+            return f"时间戳不能为负数: {timestamp}"
+        if timestamp > self.validation_config.MAX_TIMESTAMP:
+            return f"时间戳超出合理范围: {timestamp}"
         return None
 
     def _apply_cross_parameter_validation(self, tool_name: str, args: Dict, properties: Dict) -> Optional[str]:
-        """应用跨参数验证规则"""
+        """应用跨参数验证规则
         
+        Args:
+            tool_name: 工具名称
+            args: 参数字典
+            properties: 参数属性定义
+            
+        Returns:
+            错误信息，如果验证通过返回None
+        """
         # 时间范围验证
+        time_error = self._validate_time_range(args)
+        if time_error:
+            return time_error
+        
+        # 分页参数验证
+        page_error = self._validate_pagination(args)
+        if page_error:
+            return page_error
+        
+        # 数组元素验证
+        array_error = self._validate_array_elements(args, properties)
+        if array_error:
+            return array_error
+        
+        return None
+    
+    def _validate_time_range(self, args: Dict) -> Optional[str]:
+        """验证时间范围参数"""
         if "limitStartTime" in args and "limitEndTime" in args:
             start_time = args["limitStartTime"]
             end_time = args["limitEndTime"]
             if isinstance(start_time, (int, float)) and isinstance(end_time, (int, float)):
                 if start_time >= end_time:
                     return f"开始时间必须小于结束时间: {start_time} >= {end_time}"
-        
-        # 分页参数验证
+        return None
+    
+    def _validate_pagination(self, args: Dict) -> Optional[str]:
+        """验证分页参数"""
         if "pageNum" in args and "pageSize" in args:
             page_num = args["pageNum"]
             page_size = args["pageSize"]
             if isinstance(page_num, int) and isinstance(page_size, int):
                 if page_num < 1:
                     return f"页码必须大于0: {page_num}"
-                if page_size < 1 or page_size > 1000:
-                    return f"页面大小必须在1-1000之间: {page_size}"
-        
-        # 数组元素验证
+                if not (1 <= page_size <= self.validation_config.MAX_PAGE_SIZE):
+                    return f"页面大小必须在1-{self.validation_config.MAX_PAGE_SIZE}之间: {page_size}"
+        return None
+    
+    def _validate_array_elements(self, args: Dict, properties: Dict) -> Optional[str]:
+        """验证数组元素"""
         for param_name, param_value in args.items():
-            if isinstance(param_value, list) and param_name in properties:
-                param_info = properties[param_name]
-                items_info = param_info.get("items", {})
-                
-                # 验证数组元素
+            if not isinstance(param_value, list) or param_name not in properties:
+                continue
+            
+            param_info = properties[param_name]
+            items_info = param_info.get("items", {})
+            
+            # 验证对象数组的必需字段
+            if items_info.get("type") == "object":
+                required_fields = items_info.get("required", [])
                 for i, item in enumerate(param_value):
-                    if items_info.get("type") == "object":
-                        # 验证对象数组的必需字段
-                        required_fields = items_info.get("required", [])
-                        if isinstance(item, dict):
-                            for field in required_fields:
-                                if field not in item:
-                                    return f"{param_name}[{i}] 缺少必需字段: {field}"
-                        else:
-                            return f"{param_name}[{i}] 必须是对象类型"
+                    if not isinstance(item, dict):
+                        return f"{param_name}[{i}] 必须是对象类型"
+                    for field in required_fields:
+                        if field not in item:
+                            return f"{param_name}[{i}] 缺少必需字段: {field}"
         
         return None
 
     def _create_agent_executor(self) -> AgentExecutor:
-        """每次请求动态创建新的AgentExecutor，保证并发安全"""
+        """每次请求动态创建新的AgentExecutor，保证并发安全
+        
+        Returns:
+            配置好的AgentExecutor实例
+        """
         agent = create_react_agent(self.llm, self.tools, self._prompt)
         return AgentExecutor(
             agent=agent,
             tools=self.tools,
             verbose=False,
-            max_iterations=8,
-            max_execution_time=120,
+            max_iterations=self.agent_config.MAX_ITERATIONS,
+            max_execution_time=self.agent_config.MAX_EXECUTION_TIME,
             return_intermediate_steps=True,
             handle_parsing_errors=True,
-            early_stopping_method="force"
+            early_stopping_method=self.agent_config.EARLY_STOPPING_METHOD
         )
 
     def process_request(self, user_message: str, user_token: str = None, client_token: str = None) -> Dict[str, Any]:
@@ -803,10 +1074,14 @@ class AssetManageAgent:
             # 解析简化的思考步骤
             thinking_steps = self._parse_simple_thinking_steps(intermediate_steps)
 
+            # 简化技术性输出为用户友好的消息
+            simplified_output = self._simplify_success_message(output)
+
             return {
                 "success": True,
                 "message": "请求处理完成",
-                "output": output,
+                "output": simplified_output,
+                "original_output": output,  # 保留原始输出用于调试
                 "tools_used": tools_used,
                 "thinking_steps": thinking_steps,
                 "allocation_plan": self._extract_allocation_info(output),
@@ -892,12 +1167,16 @@ class AssetManageAgent:
             # 解析简化的思考步骤（用于流式传输）
             thinking_steps = self._parse_streaming_thinking_steps(intermediate_steps)
 
+            # 简化技术性输出为用户友好的消息
+            simplified_output = self._simplify_success_message(output)
+
             logger.info(f"流式请求处理完成，使用了 {len(tools_used)} 个工具，{len(thinking_steps)} 个思考步骤")
 
             return {
                 "success": True,
                 "message": "请求处理完成",
-                "output": output,
+                "output": simplified_output,
+                "original_output": output,  # 保留原始输出用于调试
                 "tools_used": tools_used,
                 "thinking_steps": thinking_steps,
                 "allocation_plan": self._extract_allocation_info(output),
@@ -1238,6 +1517,60 @@ class AssetManageAgent:
             "timestamp": datetime.now().isoformat(),
             "status": "completed" if "成功" in output or "完成" in output else "failed"
         }
+
+    def _simplify_success_message(self, technical_output: str) -> str:
+        """将技术性的成功消息转换为用户友好的信息"""
+        try:
+            # 使用LLM简化技术消息
+            simplify_prompt = f"""
+            请将以下技术性的操作结果转换为简洁、友好的用户消息。
+
+            技术输出:
+            {technical_output}
+
+            转换要求:
+            1. 去掉所有技术术语（如memberId、globalId、assetId等）
+            2. 用简单易懂的语言描述操作结果
+            3. 突出用户关心的核心信息（姓名、账号、资产等）
+            4. 保持简洁，避免冗长的流程描述
+            5. 使用友好的语气
+
+            示例转换:
+            技术输出: "成员ID（memberId）为：bf036025d2984c03b316d36a57e10caa，globalId 为 7376454108297884596"
+            友好输出: "账号创建成功"
+
+            技术输出: "选取第一个资产（编号：YSZZ8000155423，ID：ead32d1a60334d9cbefdd41a167ba858）"
+            友好输出: "已为您分配资产 YSZZ8000155423"
+
+            请直接返回简化后的友好消息，不要添加任何解释或格式标记：
+            """
+
+            # 创建LLM实例进行消息简化
+            simplify_llm = ChatOpenAI(
+                model=self.llm.model_name,
+                api_key=self.llm.openai_api_key,
+                base_url=self.llm.openai_api_base,
+                temperature=0.2,  # 较低温度保证稳定输出
+                max_tokens=300,
+                timeout=10
+            )
+
+            response = simplify_llm.invoke(simplify_prompt)
+            simplified_message = response.content.strip()
+
+            # 如果简化后的消息太短或为空，返回默认消息
+            if len(simplified_message) < 10:
+                return "操作已成功完成！"
+
+            return simplified_message
+
+        except Exception as e:
+            logger.error(f"简化成功消息失败: {str(e)}")
+            # 如果LLM简化失败，返回默认友好消息
+            if "成功" in technical_output or "完成" in technical_output:
+                return "✅ 操作已成功完成！"
+            else:
+                return "操作已完成"
 
     def get_available_tools(self) -> List[str]:
         return [tool.name for tool in self.tools]

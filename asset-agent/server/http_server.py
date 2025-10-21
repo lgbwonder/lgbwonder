@@ -106,7 +106,7 @@ class AgentRouter:
             agent_type = response.content.strip().lower()
 
             agent_type = 'asset'
-            
+
             # 验证返回值
             if agent_type in ['asset', 'knowledge']:
                 logger.info(f"路由决策: {message[:30]}... -> {agent_type}")
@@ -189,7 +189,7 @@ class IntelligentAgentServer:
             try:
                 # 确定Agent类型
                 agent_type = request.agent_type or self.router.determine_agent_type(request.message)
-                
+
                 if agent_type == 'asset':
                     # 使用资产管理Agent
                     agent = self.router.get_asset_agent(request.mcp_server_url)
@@ -404,7 +404,20 @@ class IntelligentAgentServer:
             await asyncio.sleep(0.8)
             
             # 第三步：分析检索结果
-            knowledge_count = len(knowledge_results.get("data", {}).get("results", []))
+            # 根据新的API格式计算知识数量
+            knowledge_count = 0
+            if knowledge_results.get("code") == 200:
+                data_list = knowledge_results.get("data", [])
+                for knowledge_data in data_list:
+                    if isinstance(knowledge_data, dict) and 'results' in knowledge_data:
+                        knowledge_count += len(knowledge_data.get('results', []))
+            elif knowledge_results.get("success", False):
+                # 兼容旧格式（如果有的话）
+                data = knowledge_results.get("data", {})
+                if isinstance(data, dict):
+                    knowledge_count = len(data.get("results", []))
+                else:
+                    knowledge_count = 0
             step3_data = {
                 'type': 'step',
                 'step': 3,

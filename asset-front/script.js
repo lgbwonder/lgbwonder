@@ -382,7 +382,7 @@ async function sendMessage() {
         const timeoutId = setTimeout(() => currentAbortController.abort(), CONFIG.REQUEST_TIMEOUT);
         
         // 构建完整消息（包含令牌）
-        const fullMessage = `userToken:${CONFIG.DEFAULT_USER_TOKEN},clientToken:${CONFIG.DEFAULT_CLIENT_TOKEN},${message}`;
+        const fullMessage = `${message}`;
         
         // 使用分层交互处理请求
         await handleLayeredRequest(fullMessage, currentAbortController);

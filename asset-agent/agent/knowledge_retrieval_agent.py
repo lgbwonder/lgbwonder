@@ -70,7 +70,7 @@ class KnowledgeRetrievalAgent:
         # 知识库检索配置
         self.api_url = "https://copilot.glodon.com/api/cvforce/chat/v1/knowledge/retrieval"
         self.headers = {
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTc3NDk0NDMsInJvIjoidXNlciIsInRlbiI6Inl3cHRicHRqY2Z3YiIsInVpZCI6IjEwMDE1MjEifQ.0CbbbXuo-mS2BIFWyS8g_csvtBCcKixU9cyeDMwtG-M",
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTg2ODAwMTcsInJvIjoidXNlciIsInRlbiI6Inl3cHRicHRqY2Z3YiIsInVpZCI6IjEwMDE1MjEifQ.zmPgu4gDgkGvaK2-e5swfEkXdx9ICzTC-XY7V_0B92U",
             "Content-Type": "application/json",
         }
         self.default_knowledge_id = "9d91ce0f-bf09-434e-b29c-cb09f17ca533"
@@ -134,9 +134,27 @@ class KnowledgeRetrievalAgent:
             response.raise_for_status()
             
             result = response.json()
-            logger.info(f"知识检索成功，返回结果数量: {len(result.get('data', {}).get('results', []))}")
             
-            return result
+            # 根据实际返回格式处理数据
+            if result.get('code') == 200 and result.get('data'):
+                data_list = result.get('data', [])
+                total_results = 0
+                
+                # 统计所有知识库的结果数量
+                for knowledge_data in data_list:
+                    if isinstance(knowledge_data, dict) and 'results' in knowledge_data:
+                        total_results += len(knowledge_data.get('results', []))
+                
+                logger.info(f"知识检索成功，返回结果数量: {total_results}")
+                return result
+            else:
+                error_msg = f"知识检索失败: {result.get('message', '未知错误')}"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "data": []
+                }
             
         except requests.exceptions.RequestException as e:
             error_msg = f"网络请求失败: {str(e)}"
@@ -168,18 +186,26 @@ class KnowledgeRetrievalAgent:
             str: 格式化后的文本结果
         """
         try:
-            if not raw_results.get("success", True):
-                return f"知识检索失败: {raw_results.get('error', '未知错误')}"
+            # 检查API调用是否成功
+            if raw_results.get("code") != 200:
+                return f"知识检索失败: {raw_results.get('message', '未知错误')}"
             
-            data = raw_results.get("data", {})
-            results = data.get("results", [])
+            # 解析新的数据格式
+            data_list = raw_results.get("data", [])
+            all_results = []
             
-            if not results:
+            # 从所有知识库中收集结果
+            for knowledge_data in data_list:
+                if isinstance(knowledge_data, dict) and 'results' in knowledge_data:
+                    results = knowledge_data.get('results', [])
+                    all_results.extend(results)
+            
+            if not all_results:
                 return "抱歉，没有找到相关的知识内容。"
             
             formatted_text = "📚 **相关知识内容：**\n\n"
             
-            for i, result in enumerate(results[:3], 1):  # 最多显示3个结果
+            for i, result in enumerate(all_results[:3], 1):  # 最多显示3个结果
                 content = result.get("content", "").strip()
                 score = result.get("score", 0)
                 source = result.get("source", "")
@@ -232,15 +258,22 @@ class KnowledgeRetrievalAgent:
                 knowledge_results = self.knowledge_retrieval(question)
                 knowledge_content = ""
                 
-                if knowledge_results.get("success", True):
-                    data = knowledge_results.get("data", {})
-                    results = data.get("results", [])
+                # 检查知识检索是否成功（新格式）
+                if knowledge_results.get("code") == 200:
+                    data_list = knowledge_results.get("data", [])
+                    all_results = []
                     
-                    if results:
+                    # 从所有知识库中收集结果
+                    for knowledge_data in data_list:
+                        if isinstance(knowledge_data, dict) and 'results' in knowledge_data:
+                            results = knowledge_data.get('results', [])
+                            all_results.extend(results)
+                    
+                    if all_results:
                         knowledge_content = "\n".join([
-                            f"知识片段{i+1}: {result.get('content', '').strip()}"
-                            for i, result in enumerate(results[:3])
-                            if result.get('content', '').strip()
+                            f"知识片段{i+1}: {result.get('text', '').strip()}"
+                            for i, result in enumerate(all_results[:3])
+                            if result.get('text', '').strip()
                         ])
                 
                 # 构建增强提示词
@@ -299,11 +332,19 @@ class KnowledgeRetrievalAgent:
             answer = self.intelligent_qa(message, use_knowledge=True)
             
             # 构建响应
+            # 计算知识结果数量（新格式）
+            knowledge_count = 0
+            if knowledge_results.get("code") == 200:
+                data_list = knowledge_results.get("data", [])
+                for knowledge_data in data_list:
+                    if isinstance(knowledge_data, dict) and 'results' in knowledge_data:
+                        knowledge_count += len(knowledge_data.get('results', []))
+            
             response = {
                 "success": True,
                 "answer": answer,
-                "knowledge_used": knowledge_results.get("success", True),
-                "knowledge_count": len(knowledge_results.get("data", {}).get("results", [])),
+                "knowledge_used": knowledge_results.get("code") == 200,
+                "knowledge_count": knowledge_count,
                 "timestamp": datetime.now().isoformat()
             }
             
